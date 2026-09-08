@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Strict Logic Cosmos TOML v2 -> data-oriented C++ design (Python 3.11+)."""
+import argparse, json, math, pathlib, re, sys, tomllib
+PRIMITIVES = {'AND','OR','NOT','BUF','XOR','NAND','NOR','DFF','D_LATCH','MUX2','MUX4','DMUX2','DMUX4','OC','TBUF','SW','SWITCH','H','L','PULLUP','PULLDOWN','PULL','CLK','NODE','INOUT','BUS','DISPLAY','OSCILLOSCOPE','ROM','RAM'}
+FIXED = {'NOT':(1,1),'BUF':(1,1),'OC':(1,1),'DFF':(2,2),'D_LATCH':(2,2),'MUX2':(3,1),'MUX4':(6,1),'DMUX2':(2,2),'DMUX4':(3,4),'TBUF':(2,1),'SW':(3,2),'SWITCH':(3,2),'H':(0,1),'L':(0,1),'PULLUP':(0,1),'PULL':(0,1),'PULLDOWN':(0,1),'CLK':(0,1),'NODE':(1,1),'INOUT':(1,1)}
+FIELDS=set('t n i o x y cd nnp nsh nsz non nof nsn nst nbo hd color pc pd tsu th p aw dw delay_ns eal m mf dm bl bm in on ix s k d'.split())
+def wirelist(v):
+ if v is None:return []
+ if isinstance(v,int) and not isinstance(v,bool):v=[v]
+ if not isinstance(v,list) or any((not isinstance(x,list) and (type(x)!=int or x<0 or x>1000000)) or (isinstance(x,list) and any(type(w)!=int or w<=0 or w>1000000 for w in x)) for x in v):raise ValueError('wire must be an integer 0..1000000 or an array of these')
+ return v
+
+def compile_file(path, output):
+ data=tomllib.loads(path.read_text())
+ if data.get('format_version')!=2:raise ValueError('expected format_version = 2; re-save legacy files in Logic Cosmos')
+ tables={k:v for k,v in data.items() if isinstance(v,dict)}
+ if 'workspace' not in tables:raise ValueError('missing [workspace]')
+ names={v.get('n',k):k for k,v in tables.items()}
+ if len(names)!=len(tables):raise ValueError('duplicate module names')
+ normalized={};scope=[];scope_config={}
+ for key,table in tables.items():
+  inherit=table.get('inherit',[])
+  if not isinstance(inherit,list) or len(set(inherit))!=len(inherit) or any(f not in ['t','x','y','cd','nnp'] for f in inherit):raise ValueError(f'{key}: invalid inherit')
+  rows={}
+  for section in ['inputs','gates','outputs']:
+   prev=dict(t='NODE',x=0,y=0,cd='',nnp='CENTER');rows[section]=[]
+   for idx,raw in enumerate(table.get(section,[])):
+    if not isinstance(raw,dict):raise ValueError(f'{key}.{section}[{idx}]: expected inline table')
+    unknown=[f for f in raw if f not in FIELDS and not f.startswith('scope_')]
+    if unknown:raise ValueError(f'{key}.{section}[{idx}]: unknown fields {unknown}')
+    r={f:prev[f] for f in inherit};r.update(raw);prev.update({f:r[f] for f in inherit})
+    if 'n' not in r and 'k' in r:r['n']=r['k']
+    if section=='inputs' and 'o' not in r:r['o']=r.get('ix',0)
+    if section=='outputs' and 'i' not in r:r['i']=r.get('s',0)
+    for f in ['n','t','nsh','non','nof','dm']:
+     if f in r and not isinstance(r[f],str):raise ValueError(f'{key}: {f} must be text')
+    for f in ['x','y','nsz']:
+     if f in r and (type(r[f]) not in [int,float] or not math.isfinite(r[f])):raise ValueError(f'{key}: {f} must be finite numeric')
+    r['i']=wirelist(r.get('i'));r['o']=wirelist(r.get('o'))
+    for f in ['pc','pd','tsu','th','delay_ns']:
+     if f in r and (type(r[f]) not in [float,int] or not math.isfinite(r[f]) or r[f]<0):raise ValueError(f'{key}: invalid {f}')
+    if section!='gates':
+     r['t']='INPUT' if section=='inputs' else 'OUTPUT'
+     if not r.get('n'):raise ValueError(f'{key}: port needs n')
+     if len(r['o' if section=='inputs' else 'i'])!=1:raise ValueError(f'{key}: interface port must have one wire')
+    rows[section].append(r)
+  for section in ['inputs','outputs']:
+   labels=[r['n'] for r in rows[section]]
+   if len(set(labels))!=len(labels):raise ValueError(f'{key}: duplicate interface name')
+  # A nested input array denotes multiple drivers of ONE pin, not more pins.
+  parent={}
+  def root(n):
+   parent.setdefault(n,n)
+   if parent[n]!=n:parent[n]=root(parent[n])
+   return parent[n]
+  for row in sum(rows.values(),[]):
+   for pin in row['i']:
+    if isinstance(pin,list):
+     if not pin:raise ValueError('empty multi-driver pin')
+     for w in pin[1:]:parent[root(w)]=root(pin[0])
+   if any(isinstance(w,list) for w in row['o']):raise ValueError('nested output array is invalid')
+  for row in sum(rows.values(),[]):
+   row['i']=[root(w[0] if isinstance(w,list) else w) for w in row['i']]
+   row['o']=[root(w) for w in row['o']]
+  normalized[key]=rows
+ # Recursion and referenced type validation, before code generation.
+ visiting=set();done=set()
+ def visit(k):
+  if k in visiting:raise ValueError(f'recursive module: {k}')
+  if k in done:return
+  visiting.add(k)
+  for r in normalized[k]['gates']:
+   t=r['t']
+   if t in names:visit(names[t])
+   elif t not in PRIMITIVES:raise ValueError(f'{k}: unsupported element {t}; transistor netlists are not gate-level FPGA/LVC designs')
+  visiting.remove(k);done.add(k)
+ for k in tables:visit(k)
+ keys=list(tables);ids={k:i for i,k in enumerate(keys)}
+ q=lambda v:json.dumps(v,ensure_ascii=False)
+ vec=lambda v:'{'+','.join(str(x) for x in v)+'}'
+ lines=['// Generated by LcSim. Edit the TOML source, then regenerate.','#include <lcsim/model.hpp>','namespace lc {','Design make_design() {',' Design d; d.name='+q(tables['workspace'].get('n',path.stem))+'; d.root='+str(ids['workspace'])+';',' d.definitions.resize('+str(len(keys))+');']
+ for k in keys:
+  rows=normalized[k];allrows=sum(rows.values(),[]);maxwire=max([0]+[w for r in allrows for w in r['i']+r['o']]);produced={w for r in rows['inputs']+rows['gates'] for w in r['o'] if w}
+  wire_names={w:r.get('n','') for r in rows['gates'] if r.get('t') in ['NODE','INOUT'] for w in r['o'] if r.get('n')}
+  def display_name(row, ordinal):
+   if row.get('n'):return row['n']
+   names=[wire_names.get(w,'') for w in row.get('i',[])]
+   prefixes=[n.rsplit('.',1)[0] if '.' in n else n for n in names if n]
+   return prefixes[0] if prefixes and all(x==prefixes[0] for x in prefixes) else 'DISPLAY_'+str(ordinal)
+  for r in rows['gates']+rows['outputs']:
+   for w in r['i']:
+    if w and w not in produced:raise ValueError(f'{k}: dangling wire {w}')
+  lines+=[' { auto &m=d.definitions['+str(ids[k])+']; m.name='+q(tables[k].get('n',k))+'; m.nets='+str(maxwire)+';', ' m.in='+vec([r['o'][0] for r in rows['inputs']])+'; m.out='+vec([r['i'][0] for r in rows['outputs']])+';']
+  for ordinal,r in enumerate(allrows):
+   t=r['t'];module=ids[names[t]] if t in names else -1
+   element_name=display_name(r,ordinal) if t=='DISPLAY' else r.get('n','')
+   if module>=0:expected=(len(normalized[names[t]]['inputs']),len(normalized[names[t]]['outputs']))
+   else:expected=FIXED.get(t)
+   if t in ['RAM','ROM']:
+    aw=r.get('aw',4);dw=r.get('dw',8)
+    if type(aw)!=int or not 1<=aw<=20 or type(dw)!=int or not 1<=dw<=64:raise ValueError('memory widths: address 1..20, data 1..64')
+    expected=(aw+1 if t=='ROM' else aw+dw+2,dw)
+   if expected and (len(r['i'])>expected[0] or len(r['o'])>expected[1]):raise ValueError(f'{k}/{t}: too many ports, expected {expected}')
+   if expected:
+    r['i']+= [0]*(expected[0]-len(r['i']));r['o']+=[0]*(expected[1]-len(r['o']))
+   if t in ['AND','OR','XOR','NAND','NOR'] and (len(r['i'])<2 or len(r['o'])!=1):raise ValueError(f'{k}/{t}: need >=2 inputs and one output')
+   if t=='OSCILLOSCOPE' and k=='workspace':
+    scope+=r.get('scope_channel_names',[])
+    if not scope_config:scope_config=r
+   lines+=[' { Element e; e.type='+q('MODULE' if module>=0 else {'DFF':'D_FF','SW':'SWITCH','PULL':'PULLUP'}.get(t,t))+'; e.name='+q(element_name)+'; e.in='+vec(r['i'])+'; e.out='+vec(r['o'])+'; e.module='+str(module)+';']
+   for source,target in [('pc','cycles'),('pd','ns'),('tsu','setup'),('th','hold'),('aw','aw'),('dw','dw'),('delay_ns','memory_ns'),('x','x'),('y','y'),('nsz','size')]:
+    if source in r:lines+=[' e.'+target+'='+str(r[source])+';']
+   if t=='CLK':
+    period=r.get('p',r.get('n','10'))
+    try:period=int(period)
+    except (TypeError,ValueError):period=10
+    if period<1:raise ValueError('CLK period must be positive')
+    lines+=[' e.period='+str(period)+';']
+   if r.get('eal'):lines+=[' e.active_low=true;']
+   for source,target in [('nsh','shape'),('non','on'),('nof','off'),('dm','mode')]:
+    if source in r:lines+=[' e.'+target+'='+q(r[source])+';']
+   if t=='NODE' and (r.get('nsh','circle').lower()!='circle' or r.get('non','#a8ffaa').lower()!='#a8ffaa' or r.get('nof','#3b351d').lower()!='#3b351d'):lines+=[' e.pixel=true;']
+   if t in ['RAM','ROM']:
+    mem=r.get('m','')
+    if r.get('mf'):
+     mp=path.parent/r['mf']
+     if not mp.is_file():raise ValueError(f'missing memory file: {mp}')
+     mem=mp.read_text()
+    words=[]
+    for token in re.sub(r'(?m)(#|;|//).*$', '',mem).split():
+     try:words.append(int(token,0) if token.lower().startswith(('0x','0b','0o')) else int(token,16))
+     except ValueError:raise ValueError(f'invalid memory word {token}')
+    if len(words)>1<<r.get('aw',4) or any(w<0 or w>=1<<r.get('dw',8) for w in words):raise ValueError('memory contents exceed configured width/depth')
+    lines+=[' e.memory={'+','.join(str(w)+'ULL' for w in words)+'};']
+   lines+=[' m.elements.push_back(std::move(e)); }']
+  lines+=[' }']
+ for src,dst,factor in [('scope_memory_samples','capacity',1),('scope_time_base_ms','span',10000000000),('scope_holdoff_ms','holdoff',1000000000),('scope_pretrigger_percent','pretrigger',.01)]:
+  if src in scope_config:lines+=[' d.scope_config.'+dst+'='+str(scope_config[src]*factor)+';']
+ if 'scope_trigger_mode' in scope_config:lines+=[' d.scope_config.mode='+q(scope_config['scope_trigger_mode'])+';']
+ for index,enabled in enumerate(scope_config.get('scope_trigger_enabled',[])):
+  if enabled and index<len(scope_config.get('scope_channel_names',[])):
+   lines+=[' d.scope_config.trigger='+q(scope_config['scope_channel_names'][index])+';']
+   for src,dst in [('scope_trigger_bits','bit'),('scope_trigger_edges','edge')]:
+    if index<len(scope_config.get(src,[])):lines+=[' d.scope_config.'+dst+'='+ (q(scope_config[src][index]) if dst=='edge' else str(scope_config[src][index]))+';']
+   values=scope_config.get('scope_trigger_bus_values',[])
+   if index<len(values) and values[index]:
+    text=str(values[index]);word=int(text,0) if text.lower().startswith(('0x','0b')) else int(text)
+    widths=scope_config.get('scope_channel_lines',[]);width=widths[index] if index<len(widths) else 1
+    if word<0 or word>=1<<width:raise ValueError('scope trigger value exceeds channel width')
+    lines+=[' d.scope_config.trigger_value='+q(format(word,f'0{width}b'))+';']
+   break
+ lines+=[' d.scope={'+','.join(q(n) for n in dict.fromkeys(scope) if n)+'};',' return d;','}','}']
+ output.parent.mkdir(parents=True,exist_ok=True);output.write_text('\n'.join(lines)+'\n')
+ print(f'{path} -> {output}: {len(keys)} definitions; flattened at simulation startup')
+
+def main():
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('input',type=pathlib.Path);p.add_argument('output',type=pathlib.Path);a=p.parse_args()
+ try:compile_file(a.input,a.output)
+ except (ValueError,OSError,KeyError,TypeError) as e:p.exit(1,f'lc_compile: {e}\n')
+if __name__=='__main__':main()
