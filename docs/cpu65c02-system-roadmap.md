@@ -1,8 +1,8 @@
 # CPU65C02 system roadmap
 
-## Accepted r6 memory map
+## Implemented memory map (r7/r8)
 
-The address subsystem is widened before the physical stack is added:
+PC and MAR are now 16-bit; the physical stack uses the unified RAM:
 
 | Range | Size | Use |
 | --- | ---: | --- |
@@ -20,23 +20,12 @@ I/O/timer decoder and its original monitor map.
 
 ## Current boundary
 
-The supplied r6 Nim patch defines the 16-bit reference model, compact 4 KiB ROM
-images, S and the first stack instructions. The checked-in TOML fixture now has
-a transitional `stack-lab` implementation:
-
-- `PC`, `MAR` and normal memory decoding are still 8-bit;
-- S is an 8-bit load/inc/dec register with a tri-state data-bus output;
-- a separate 256-byte bank models logical addresses `$0100 | S`;
-- a MAR-load latch keeps that bank selected for the following memory step;
-- the control ROM is 42 bits wide and exercises A/X/Y push/pull plus TSX/TXS;
-- the ISA exposes implied, immediate, zero-page/indexed and relative forms;
-- call, return, interrupt and the unified 16-bit address bus remain future work.
-
-The shift/rotate and indexed programs remain useful toolchain regressions. The
-LcSim TOML regression now runs the stack-lab program in both technologies and
-with cache disabled/enabled. It is not yet a full 65C02 address-space test.
-A CPU without decimal ADC/SBC can be highly compatible with the 65C02, but it
-should be described as a **non-decimal 65C02 subset**, not a complete 65C02.
+The r8 TOML implements PC16, MAR16, reset-vector boot, unified RAM stack,
+absolute addressing and JSR/RTS. It adds ADH, a PCH bus driver, a four-bit STEP
+counter and a 45-bit control word. See [r8 implementation](cpu65c02-absolute-call.md).
+The toolchain has 107 forms / 54 mnemonics. Absolute indexed and indirect
+addressing, PHP/PLP and interrupts remain to be added. This is a **non-decimal
+65C02 subset**, not a complete 65C02 or KIM-1 emulator.
 
 LcSim itself already accepts RAM/ROM address widths up to 20 bits and data widths
 up to 64 bits. The main work belongs in the CPU schematic, microcode and Nim
@@ -44,13 +33,13 @@ toolchain rather than in the basic memory engine.
 
 ## Recommended implementation order
 
-### 1. Freeze the current 8-bit machine
+### 1. Preserve regressions (completed through r8)
 
 Keep the supplied shift/rotate/rotate and indexed programs as regression tests.
 Record the expected RAM signature and cycle limit for FPGA and LVC. This protects
 the working data path while address and control paths are replaced.
 
-### 2. Widen only the address subsystem
+### 2. Widen only the address subsystem (PC/MAR/reset/ADH completed)
 
 Keep the data bus and ALU at 8 bits. Replace PC8 and MAR8 with paired low/high
 registers:
@@ -65,21 +54,16 @@ The external memory interface becomes `A[15:0]`, `D[7:0]`, `/OE` and `/WE`.
 ROM/RAM decoding should remain explicit in TOML so the same CPU can be embedded
 in different systems.
 
-### 3. Add the hardware stack
+### 3. Add the hardware stack (S, A/X/Y push/pull and JSR/RTS completed)
 
 Add an 8-bit S register with reset value `$FF`. Its effective address is
 `$0100 | S`; this avoids a second physical address space and matches 65C02
 software. Add independent `S_INC`, `S_DEC`, `S_OE_N`, `S_LOAD_N` and a stack
 address selection state for MAR.
 
-The r6 tool contract implements TSX/TXS, PHA/PLA, PHX/PLX and PHY/PLY. Wire and
-test the physical TOML in this order:
-
-1. `TSX`, `TXS`;
-2. `PHA`, `PLA`, `PHP`, `PLP`;
-3. `PHX`, `PLX`, `PHY`, `PLY`;
-4. `JSR`, `RTS` with verified return-address byte order;
-5. `BRK`, `RTI`, then RESET/IRQ/NMI vector fetch.
+The physical TOML tests TSX/TXS, PHA/PLA, PHX/PLX, PHY/PLY and JSR/RTS.
+Remaining work: PHP/PLP with the architectural status layout, then BRK/RTI and
+IRQ/NMI vector fetch. RESET is already implemented.
 
 Push must write before decrementing S; pull must increment S before reading.
 Status pushes need fixed B/unused-bit rules rather than copying a raw internal
@@ -87,16 +71,16 @@ flags byte.
 
 ### 4. Extend addressing and the Nim tools
 
-In `model.nim`, change PC/effective addresses to `uint16`, add `regS`, absolute
-and indirect address modes, three-byte instruction lengths and stack/call
-semantic kinds. In `reference_cpu.nim`, use 65536 bytes of memory and keep
-zero-page index arithmetic modulo 256.
+The Nim model already uses 16-bit PC/effective addresses, regS, a 64 KiB
+reference memory, three-byte absolute instructions and call/return semantics.
+The assembler retains signed 8-bit branch validation, and the disassembler
+accepts `--origin:0xF000`. Known byte addresses use zero-page forms when possible;
+forward references conservatively use absolute forms.
 
-In `assembler.nim`, widen origins, labels and emitted addresses to `0..65535`;
-retain signed 8-bit relative-branch validation. Add absolute, absolute-X/Y,
-indexed-indirect, indirect-indexed, zero-page-indirect and JMP-indirect forms to
-the single ISA declaration in `isa.nim`. The LUT generator should derive the new
-microcode from those declarations rather than introduce a second opcode table.
+Next add absolute-X/Y, indexed-indirect, indirect-indexed, zero-page-indirect
+and JMP-indirect forms to `isa.nim`, with matching hardware address paths and
+microcode. Keep zero-page index/pointer arithmetic modulo 256. The LUT must
+continue to be derived from the single ISA declaration.
 
 ### 5. Add a memory-mapped terminal and keyboard
 

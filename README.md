@@ -41,19 +41,17 @@ make DESIGN=examples/cpu65c02.toml BUILD=build-cpu
 ./build-cpu/lcsim --technology lvc --steps 18000 --no-cache
 ```
 
-The included CPU fixture comes from the supplied `cpu6502_mini_r5_v5` circuit.
-Its MAR clock AND has `pc=4`, and its main RAM initialization has been cleared.
-The embedded transitional r6 program tests `PHA/PLA`, `PHX/PLX`, `PHY/PLY`,
-`TSX/TXS` and stack-pointer wraparound. It must reach the loop at `$2A`, with
-main RAM offsets `$03..$08 = 99 42 FF FF 7E 55` (offset `$05` is the stored
-`TSX` result) and stack RAM `$00/$FE/$FF = 7E/99/55`.
+The r8 CPU fixture preserves the supplied editor layout and decorative NODEs.
+PC/MAR are 16-bit; RAM occupies `$0000..$0FFF`, ROM `$F000..$FFFF`, and the
+reset vector is at `$FFFC/$FFFD`. It adds absolute addressing and JSR/RTS.
+The embedded test starts at `$F000`, ends at `$F180`, and writes
+`MainRAM[$0FFF]=$A5`. It checks nested calls, stack wrap and all 23 new forms.
 
-The proposed final r6 CPU map is RAM `$0000..$0FFF`, ROM `$F000..$FFFF`, the
-standard 65C02 stack page `$0100..$01FF`, and RESET at `$FFFC/$FFFD`. Until
-PC16, MAR16, memory decode and reset-vector fetch are changed together,
-`examples/cpu65c02.toml` uses a separate 256-byte stack bank selected by
-`MAR_STACK`. Logically it is `$0100 | S`; physically it avoids introducing
-address aliases into the still 8-bit PC/MAR datapath.
+See [r8 instructions, signatures and ROM loading](docs/cpu65c02-absolute-call.md).
+`make test-cpu` also executes the previous r7 program. Use the matching r8 Nim
+patch to generate the new 4096×45-bit control image, then install it with
+`tools/cpu65c02_image.py`, which supplies the boot bank. This is still a
+non-decimal 65C02 subset; indirect addressing and interrupts remain future work.
 
 ## Generate and link explicitly
 

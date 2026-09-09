@@ -28,39 +28,48 @@ All executed tests passed:
   nested multiple-driver input arrays.
 - Cache-on versus cache-off exact timestamped transition equality in a focused
   hierarchical test containing short pulses and Z input changes.
-- CPU stack-lab, both technologies, both cache settings: main-RAM signature,
-  stack-bank signature, final S, loop PC and matching complete transition hashes.
+- Previous r7 program on the r8 CPU, LVC/FPGA, cache off/on: unified RAM signature, S wraparound,
+  PC16 sequential carry, signed backward/forward branches across pages,
+  reset-vector reads at FFFC/FFFD, warm reset with a changed vector and RAM
+  retention, instruction fetch from RAM at 0200/0F80, PC FFFF-to-0000 rollover.
+- r8 absolute/call ROM in LVC/FPGA, cache off/on: all 23 new forms, nested
+  calls, stack wrap, return byte order and JSR operand crossing F0FF/F100.
+  Success is RAM[0FFF]=A5, S=FF, PC=F180/F181.
+- ROM image installation rejects bad sizes/word widths, preserves schematic
+  properties, and regenerates the boot-idle control bank.
+- The TypeScript parser and serializer round-trip the r8 file: 1124 workspace
+  nodes, 1374 workspace wires, 20 custom modules. This checks format/graph
+  compatibility, not TypeScript CPU execution or equality of engine traces.
 
-## CPU measurement
+The C++ CPU regression also passed after compiling the TypeScript-serialized
+TOML, including all four technology/cache combinations.
 
-One observed run, 18,000 simulation steps per configuration, excluding
-construction time, using the supplied circuit with MAR `pc=4` and cleared RAM:
+## CPU regression
 
-| Profile | Cache off, steps/s | Cache on, steps/s | Estimated cache bytes |
-|---|---:|---:|---:|
-| LVC | 13,830 | 49,086 | 426,906 |
-| FPGA | 15,445 | 52,807 | 425,790 |
+Run `make test-cpu` for the checked-in r8 ROM and the separate r7 regression
+ROM. Each runs 20,000 steps. The r7 scenario also performs an input reset with
+a changed vector. Additional instances
+execute code in both ends of RAM and test full PC rollover. Complete timestamped
+transition hashes must match for cache on/off within each technology; elapsed
+host time is printed only for local comparison. No clock-rate benchmark is
+inferred from the technology's nominal MHz.
 
-The flattened CPU stack-lab contains 741 simulated gates/devices and 2,995
-allocated net slots (including aliased and unused slots). NODEs and module
-boundaries are connectivity, not gates to recompute. These numbers are not
-directly comparable to the editor's component count.
+The r8 changes are in the schematic, tests, ROM helper and Nim toolchain; no
+CPU-specific behavior was added to the C++ engine. Nim 2.2.4 compiled the CLI
+and ran both available suites (7 tests). The independent instruction model
+executes all new forms; assembler tests cover forward targets, little-endian
+encoding and rejection of overflow/unsupported indexed operands. Disassembly
+checks cover origins, branch targets and truncated input. Both ISA profiles
+pass microcode validation. For all 84 previous safe opcodes, the first eight
+microsteps preserve the original lower 42 control bits.
 
-The workload includes all eight initial stack instructions, both S wraparound
-directions and the final BRA pass loop. The timing is
-an indicative measurement in a shared environment, not a universal speedup or
-a claim of host execution at the simulated technology's MHz. Re-run
-`make test-cpu` on the target machine. The cache was roughly 3.4–3.6× faster in
-this run, but lookup overhead can dominate a different workload.
+The embedded 4096-word execution bank matches the actual Nim-generated LUT.
+The embedded program matches the actual Nim-assembled example. The ROM helper
+reinstalls both as a byte-for-byte no-op. A semantic layout comparison verifies
+all original coordinates, labels and styles, including 1247 NODEs across the
+workspace/modules; only the accidental PC15-to-PC14 alias is repaired.
 
-Transition FNV regression fingerprints in this build:
-
-- LVC: `531666357012246857` with cache both on and off.
-- FPGA: `478034219658109357` with cache both on and off.
-
-These compare the two C++ execution paths, not bit-for-bit event traces against
-the TypeScript engine. Cross-engine validation here is the CPU program outcome
-and the port/timing semantics exercised by the focused tests.
+See [the r8 guide](cpu65c02-absolute-call.md) for signatures and boundaries.
 
 ## GUI validation boundary
 

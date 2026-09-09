@@ -1,0 +1,6 @@
+python3 tools/cpu65c02_image.py examples/cpu65c02.toml --control ../../nim/logic_cosmos_cpu_tools/control-lut.mem 
+
+scripts/build_tool.sh examples/cpu65c02.toml cpu65c02
+./build-cpu65c02/lcsim-gui --scope --technology lvc
+./build-cpu65c02/lcsim --technology fpga
+
