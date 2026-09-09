@@ -51,3 +51,26 @@ class CpuImage(unittest.TestCase):
         self.assertEqual(words[2048:], [image.BOOT_IDLE]*2048)
         with self.assertRaises(ValueError):
             image.update(source, control=[0]*4096)
+
+    def test_ambiguous_equal_image_is_rewritten(self):
+        source = (ROOT / 'examples/cpu65c02.toml').read_text()
+        gates = tomllib.loads(source)['workspace']['gates']
+        control = next(g for g in gates if g.get('dw') == 45)
+        words = image.hex_words(control['m'])[:4096]
+        old = source.replace('0x', '')
+        fixed = image.update(old, control=words)
+        self.assertIn('0x106180099773', fixed)
+        self.assertNotEqual(old, fixed)
+        self.assertEqual(image.update(fixed, control=words), fixed)
+        for row in tomllib.loads(source)['workspace']['gates']:
+            if row.get('m'):
+                self.assertTrue(all(w.startswith('0x') for w in row['m'].split()))
+
+    def test_canonical_hex_preserves_words_and_other_properties(self):
+        source = 'format_version=2\n[workspace]\ngates=[\n{t="ROM", m="20 55 106180099773 0b10", n="USER", x=42},\n]\n'
+        fixed = image.canonicalize_hex_memories(source)
+        row = tomllib.loads(fixed)['workspace']['gates'][0]
+        self.assertEqual(row['m'], '0x20 0x55 0x106180099773 0x2')
+        self.assertEqual(row['x'], 42)
+        self.assertEqual(row['n'], 'USER')
+        self.assertEqual(image.canonicalize_hex_memories(fixed), fixed)

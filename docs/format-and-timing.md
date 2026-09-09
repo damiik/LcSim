@@ -61,8 +61,10 @@ module named `D_FF` remains a user module.
   terminal states unknown. Delay applies to OE, not data propagation.
 - Memory address width is 1..20 and data width 1..64. ROM ports are address
   bits (LSB first), /OE → data bits. RAM inputs add data bits and /WE before /OE.
-  Memory initialization uses whitespace-separated hexadecimal words (`0x`
-  optional; `0b` is also accepted), or `mf` relative to the TOML file.
+  Memory initialization uses whitespace-separated hexadecimal words, or `mf`
+  relative to the TOML file. Always write an explicit `0x` prefix for exchange
+  with LogicCosmos: it interprets bare digit-only tokens as decimal. The LcSim
+  compiler accepts bare hex for older files and also supports `0b`/`0o`.
 - `delay_ns` is address-to-data delay, independent of technology. The last
   settled word remains available while a new address settles, matching Logic
   Cosmos. /OE releases outputs immediately. A write to the settled address

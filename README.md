@@ -41,6 +41,12 @@ make DESIGN=examples/cpu65c02.toml BUILD=build-cpu
 ./build-cpu/lcsim --technology lvc --steps 18000 --no-cache
 ```
 
+The [r10 ALU selector fix](docs/cpu65c02-alu-selector-r10.md) replaces shared-output
+TBUFs with MUX4 to avoid transient contention when selecting an ALU operation.
+
+For a file from r8, apply the [r9 memory radix fix](docs/cpu65c02-memory-radix-r9.md)
+before running it in LogicCosmos. Memory words must carry an explicit `0x` prefix.
+
 The r8 CPU fixture preserves the supplied editor layout and decorative NODEs.
 PC/MAR are 16-bit; RAM occupies `$0000..$0FFF`, ROM `$F000..$FFFF`, and the
 reset vector is at `$FFFC/$FFFD`. It adds absolute addressing and JSR/RTS.

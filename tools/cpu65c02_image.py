@@ -63,10 +63,13 @@ def update(text, program=None, control=None):
                 raise ValueError(f'control image must be {count} words of {width} bits')
             idle = BOOT_IDLE_R8 if width == 45 else BOOT_IDLE
             values = values + [idle] * count
-        if hex_words(row.get('m', '')) == values:
+        # Always make the radix explicit: LogicCosmos accepts decimal bare
+        # digits, whereas the LcSim compiler treats bare memory words as hex.
+        # Equality of numeric values alone must not preserve an ambiguous image.
+        memory = ' '.join(f'0x{w:0{(width + 3) // 4}X}' for w in values)
+        if row.get('m', '') == memory:
             found.add(label)
             continue
-        memory = ' '.join(f'{w:0{(width + 3) // 4}X}' for w in values)
         lines[i], count = MEMORY.subn('m = ' + json.dumps(memory), line)
         if count != 1:
             raise ValueError('expected exactly one inline m string in ROM')
@@ -78,19 +81,51 @@ def update(text, program=None, control=None):
     return result
 
 
+def canonicalize_hex_memories(text):
+    """Preserve LcSim hexadecimal meaning of inline m strings in a format-2 file.
+
+    Explicit 0x/0b/0o prefixes follow the compiler's rules. Bare words are hex.
+    This is a migration from LcSim files, not a guess at decimal user input.
+    """
+    document = tomllib.loads(text)
+    if document.get('format_version') != 2:
+        raise ValueError('expected TOML format_version = 2')
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if not line.lstrip().startswith('{'):
+            continue
+        row = tomllib.loads('row = ' + line.strip().removesuffix(','))['row']
+        if not isinstance(row.get('m'), str):
+            continue
+        words = row['m'].replace(',', ' ').split()
+        values = [int(w, 0) if w.lower().startswith(('0x', '0b', '0o')) else int(w, 16)
+                  for w in words]
+        if any(v < 0 for v in values):
+            raise ValueError('negative memory word')
+        memory = ' '.join(f'0x{v:X}' for v in values)
+        lines[i] = MEMORY.sub('m = ' + json.dumps(memory), line)
+    result = ''.join(lines)
+    tomllib.loads(result)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('toml', type=Path)
     parser.add_argument('--program', type=Path, help='hex bytes, offsets from F000')
     parser.add_argument('--control', type=Path, help='r7: 2048x42 or r8: 4096x45 lcct control hex')
     parser.add_argument('-o', '--output', type=Path, help='default: update TOML in place')
+    parser.add_argument('--canonical-hex', action='store_true',
+                        help='make all inline LcSim memory words explicit hex; preserves layout')
     args = parser.parse_args()
-    if not args.program and not args.control:
-        parser.error('provide --program and/or --control')
+    if not args.program and not args.control and not args.canonical_hex:
+        parser.error('provide --program, --control or --canonical-hex')
     try:
         result = update(args.toml.read_text(),
                         hex_words(args.program.read_text()) if args.program else None,
                         hex_words(args.control.read_text()) if args.control else None)
+        if args.canonical_hex:
+            result = canonicalize_hex_memories(result)
         destination = args.output or args.toml
         destination.write_text(result)
         print(destination)

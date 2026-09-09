@@ -5,6 +5,9 @@ kolory, kształty i dekoracyjne NODE. Rozdziela jedynie przypadkowe zwarcie
 `PC_ADR.PC15` z `PC_ADR.PC14`. Nowa logika składa się ze zwykłych modułów i bramek;
 nie dodaje instrukcji CPU do silnika LcSim.
 
+Zapis pamięci został doprecyzowany w [poprawce r9](cpu65c02-memory-radix-r9.md).
+Każde słowo inline `m` ma teraz jawny prefiks `0x`.
+
 ## Uruchomienie
 
 Domyślny ProgramROM zawiera już `examples/cpu65c02-absolute-call.hex`, a Control

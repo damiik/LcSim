@@ -44,6 +44,22 @@ All executed tests passed:
 The C++ CPU regression also passed after compiling the TypeScript-serialized
 TOML, including all four technology/cache combinations.
 
+## r9 cross-engine memory radix
+
+The full CPU r8 example now also passes actual TypeScript simulation in
+LogicCosmos LVC and FPGA using explicit 0x memory words. This supplements the
+earlier parser/serializer-only compatibility check. See [r9 analysis and test
+command](cpu65c02-memory-radix-r9.md).
+
+## r10 ALU contention regression
+
+The TypeScript CPU integration test now also checks the same conflict collector
+used by the GUI after simulation steps when the conflict revision changes.
+It reproduces the five ALU conflict lines at PC=F270 on r9 and passes on r10 in
+LVC and FPGA. The previous final-signature-only test did not detect this
+transient. The new MUX4 selector also passes the C++ CPU/cache regressions.
+See [r10 details](cpu65c02-alu-selector-r10.md).
+
 ## CPU regression
 
 Run `make test-cpu` for the checked-in r8 ROM and the separate r7 regression
