@@ -4,13 +4,15 @@
 #endif
 #include <chrono>
 #include <iostream>
+#include <fstream>
+#include <sstream>
 #include <stdexcept>
 int main(int argc,char** argv)  {
   try  {
     lc::Profile profile=lc::Profile::lvc();
     uint64_t steps=10000;
     bool headless=false,scope=false,cache=true,dump=false;
-    std::string vcd;
+    std::string vcd,terminal_input,terminal_output;
     std::vector<std::pair<std::string,std::string>> inputs;
 #ifdef LCSIM_SCOPE
     scope=true;
@@ -29,6 +31,8 @@ int main(int argc,char** argv)  {
       }
       else if(a=="--headless")headless=true;
       else if(a=="--scope")scope=true;
+      else if(a=="--terminal-input")terminal_input=arg();
+      else if(a=="--terminal-output")terminal_output=arg();
       else if(a=="--no-cache")cache=false;
       else if(a=="--steps")steps=std::stoull(arg());
       else if(a=="--vcd")vcd=arg();
@@ -42,14 +46,14 @@ int main(int argc,char** argv)  {
         );
       }
       else if(a=="--help")  {
-        std::cout<<"LcSim: [--headless] [--scope] [--technology fpga|lvc] [--steps N] [--no-cache] [--vcd FILE] [--input NAME=VALUE]\n";
+        std::cout<<"LcSim: [--headless] [--scope] [--technology fpga|lvc] [--steps N] [--no-cache] [--vcd FILE] [--input NAME=VALUE] [--terminal-input FILE] [--terminal-output FILE]\n";
         return 0;
       }
       else throw std::runtime_error("unknown option "+a);
     }
     auto design=lc::make_design();
 #ifdef LCSIM_GUI
-    if(!headless)return lc::gui(design,profile,scope,cache);
+    if(!headless&&terminal_input.empty()&&terminal_output.empty())return lc::gui(design,profile,scope,cache);
 #else
     (void)headless;
     (void)scope;
@@ -58,6 +62,12 @@ int main(int argc,char** argv)  {
     lc::Scope analyzer(sim,design.scope);
     analyzer.configure(design.scope_config);
     for(const auto& [n,v]:inputs)sim.drive(n,v);
+    if(!terminal_input.empty()) {
+      auto terminals=sim.terminals();if(terminals.empty())throw std::runtime_error("design has no terminal");
+      std::ifstream file(terminal_input);if(!file)throw std::runtime_error("cannot read terminal input");
+      std::ostringstream content;content<<file.rdbuf();
+      if(!sim.terminal_send(terminals.front().first,content.str()))throw std::runtime_error("terminal input exceeds keyboard queue");
+    }
     auto start=std::chrono::steady_clock::now();
     for(uint64_t i=0; i<steps; i++)sim.step();
     double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
@@ -67,6 +77,11 @@ int main(int argc,char** argv)  {
       std::cout<<"RAM "<<name<<':'<<std::hex;
       for(auto word:memory)std::cout<<' '<<word;
       std::cout<<std::dec<<'\n';
+    }
+    if(!terminal_output.empty()) {
+      auto terminals=sim.terminals();if(terminals.empty())throw std::runtime_error("design has no terminal");
+      std::ofstream file(terminal_output);if(!file)throw std::runtime_error("cannot write terminal output");
+      file<<terminals.front().second->transcript;
     }
     if(dump)std::cout<<sim.diagnostics();
     if(!vcd.empty())analyzer.export_vcd(vcd,analyzer.available_begin(),sim.now);

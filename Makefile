@@ -49,3 +49,14 @@ test: test-extended
 test-extended: $(BUILD)/liblcsim.a
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/extended.cpp $^ -o $(BUILD)/test-extended
 	$(BUILD)/test-extended
+
+.PHONY: test-terminal test-term-cpu
+test: test-terminal
+test-terminal: $(BUILD)/liblcsim.a
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/terminal.cpp $^ -o $(BUILD)/test-terminal
+	$(BUILD)/test-terminal
+$(BUILD)/term.cpp: examples/cpu65c02-term.toml tools/lc_compile.py | $(BUILD)
+	$(PYTHON) tools/lc_compile.py "$<" "$@"
+test-term-cpu: $(BUILD)/term.cpp $(BUILD)/liblcsim.a
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/terminal_cpu.cpp $^ -o $(BUILD)/test-term-cpu
+	$(BUILD)/test-term-cpu

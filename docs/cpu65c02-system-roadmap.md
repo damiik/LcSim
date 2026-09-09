@@ -82,22 +82,14 @@ and JMP-indirect forms to `isa.nim`, with matching hardware address paths and
 microcode. Keep zero-page index/pointer arithmetic modulo 256. The LUT must
 continue to be derived from the single ISA declaration.
 
-### 5. Add a memory-mapped terminal and keyboard
+### 5. Polling terminal (implemented in r11)
 
-The terminal should be a stateful LcSim peripheral shared by GUI and headless
-builds. A small register interface is sufficient:
-
-| Register | Read | Write |
-| --- | --- | --- |
-| `TTY_DATA` | remove one byte from keyboard FIFO | append one byte to terminal |
-| `TTY_STATUS` | RX-ready and TX-ready bits | ignored |
-| `TTY_CONTROL` | interrupt-enable state | update control bits |
-
-Addresses belong to the system TOML memory map, not the LcSim engine. The GUI
-can render a text terminal in PANELS and forward key presses to the FIFO.
-Headless mode should accept an input file/string and capture terminal output so
-CPU tests remain deterministic. Terminal and keyboard state must be excluded
-from hierarchical combinational caches, just like RAM, ROM, clocks and latches.
+TERM is now a separate view alongside PANELS/SCOPE, sharing the same simulation.
+The stateful TERMINAL peripheral occupies `$D010..$D013` in the separate
+`cpu65c02-term.toml` example. GUI and headless modes share its keyboard queue
+and display. See [device contract, build and monitor commands](terminal-r11.md).
+LcMon implements basic WozMon command syntax on the existing CPU subset.
+Running the original WozMon binary still requires additional CPU instructions.
 
 ## Milestone tests
 

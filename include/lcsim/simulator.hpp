@@ -1,5 +1,7 @@
 #pragma once
 #include "model.hpp"
+#include "terminal.hpp"
+#include <memory>
 #include <deque>
 #include <functional>
 #include <map>
@@ -51,6 +53,8 @@ namespace lc  {
     void clear_memory(const std::string& name)  {
       replace_memory(name,{});
     }
+    std::vector<std::pair<std::string,Terminal*>> terminals();
+    bool terminal_send(const std::string&,const std::string&);
     std::string diagnostics() const;
     Time now=0;
     Profile profile;
@@ -79,6 +83,10 @@ namespace lc  {
     };
     struct Gate  {
       Element e;
+      std::unique_ptr<Terminal> terminal;
+      bool terminal_read=false,terminal_write=false,terminal_write_valid=false;
+      int terminal_reg=-1,terminal_write_reg=-1;
+      uint8_t terminal_read_value=0,terminal_write_value=0;
       std::string path;
       std::vector<int> drivers;
       Logic stored=Logic::L,last_clock=Logic::L,last_data=Logic::X;

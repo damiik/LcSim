@@ -103,6 +103,7 @@ namespace lc  {
         gate.drivers.push_back(di);
       }
       if(top&&e.type=="INPUT")views.back().drivers=gate.drivers;
+      if(e.type=="TERMINAL")gate.terminal=std::make_unique<Terminal>();
       if(e.type=="ROM"||e.type=="RAM")gate.e.memory.resize(size_t(1)<<e.aw);
       gates.push_back(std::move(gate));
       groups[group].gates.push_back(id);
@@ -410,6 +411,34 @@ namespace lc  {
       );
       return;
     }
+    if(t=="TERMINAL") {
+      const auto a=address(v,0,16);
+      const int reg=a>=int64_t(g.e.io_base)&&a<int64_t(g.e.io_base)+4?int(a-g.e.io_base):-1;
+      const bool read=reg>=0&&v[24]==Logic::L&&v[25]==Logic::H;
+      const bool write=reg>=0&&v[25]==Logic::L&&v[24]==Logic::H;
+      if(g.terminal_read&&(!read||reg!=g.terminal_reg)) {
+        if(g.terminal_reg==0&&g.terminal_read_value&0x80)g.terminal->consume();
+        g.terminal_read=false;
+      }
+      if(read&&!g.terminal_read) {
+        g.terminal_read=true;g.terminal_reg=reg;
+        g.terminal_read_value=g.terminal->read(unsigned(reg));
+      }
+      // Commit once on a clean /WR rising edge. Address/data may settle while low.
+      if(g.terminal_write&&!write) {
+        if(v[25]==Logic::H&&reg==g.terminal_write_reg&&g.terminal_write_valid)
+          g.terminal->write(unsigned(g.terminal_write_reg),g.terminal_write_value);
+        g.terminal_write=false;
+      }
+      if(write) {
+        const auto data=address(v,16,8);
+        g.terminal_write=true;g.terminal_write_reg=reg;
+        g.terminal_write_valid=data>=0;g.terminal_write_value=uint8_t(data<0?0:data);
+      }
+      for(size_t b=0;b<g.drivers.size();b++)schedule(g.drivers[b],
+        read?((g.terminal_read_value>>b)&1?Logic::H:Logic::L):Logic::Z,0);
+      return;
+    }
     if(t=="RAM"||t=="ROM")  {
       int64_t addr=address(v,0,g.e.aw);
       bool changed=false;
@@ -638,6 +667,17 @@ namespace lc  {
       return;
     }
     throw std::runtime_error("unknown memory: "+name);
+  }
+  std::vector<std::pair<std::string,Terminal*>> Simulator::terminals() {
+    std::vector<std::pair<std::string,Terminal*>> result;
+    for(auto& gate:gates)if(gate.terminal)result.emplace_back(gate.path,gate.terminal.get());
+    return result;
+  }
+  bool Simulator::terminal_send(const std::string& name,const std::string& text) {
+    for(size_t i=0;i<gates.size();i++)if(gates[i].terminal&&gates[i].path==name) {
+      bool accepted=gates[i].terminal->send(text);dirty[i]=true;advance(0);return accepted;
+    }
+    throw std::runtime_error("unknown terminal: "+name);
   }
   std::string Simulator::diagnostics()const  {
     std::ostringstream out;

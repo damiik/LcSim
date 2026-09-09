@@ -89,9 +89,16 @@ See [the r8 guide](cpu65c02-absolute-call.md) for signatures and boundaries.
 
 ## GUI validation boundary
 
-`src/gui.cpp` passed a strict C++ syntax check against a local declaration-only
-raylib API shim. The shim was only a scratch validation aid and is not shipped.
-No graphics functions were executed, and no screenshot was fabricated. Linking
-against actual raylib and visual/interaction QA remain outstanding. The source
-and documented build targets are provided so that those checks can be performed
-on a machine with raylib installed.
+`src/gui.cpp` passes a strict C++ syntax check against the official raylib 5.5
+header. This environment has no graphics development libraries or display
+server, so real linking and visual/interaction QA remain outstanding.
+No headless test result is claimed as visual verification.
+
+## r11 terminal verification
+
+`make test-terminal` checks encoding, queue/history bounds and MMIO behavior
+in both technologies with cache on/off. `make test-term-cpu` executes the
+checked-in monitor on the real flattened CPU: keyboard input, RAM store/range
+read, and a program entered into RAM which prints `!` and jumps back to the
+monitor. All four technology/cache combinations must produce identical text.
+`make test-cpu` retains the previous stack/reset/absolute/call regressions.

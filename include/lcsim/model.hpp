@@ -22,7 +22,7 @@ namespace lc  {
     std::vector<Net> in, out;
     int module=-1;
     double cycles=-1, ns=-1, setup=-1, hold=-1;
-    uint32_t period=10, aw=4, dw=8;
+    uint32_t period=10, aw=4, dw=8, io_base=0xd010;
     double memory_ns=0;
     bool active_low=false;
     std::vector<uint64_t> memory;

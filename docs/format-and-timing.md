@@ -74,3 +74,7 @@ module named `D_FF` remains a user module.
 Only top-level presentation elements are shown in the main workspace. Module
 internals remain available through `--dump`; the GUI is a simulation front panel,
 not a replacement schematic editor.
+
+The LcSim-only `TERMINAL` extension has fixed A[16], Din[8], /RD, /WR inputs
+and Dout[8] outputs. `io_base` selects four aligned registers. It is stateful
+and cannot be result-cached. See [the exact MMIO/timing contract](terminal-r11.md).

@@ -8,7 +8,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/build_tool.sh [design.toml] [name]
 
-Builds the headless simulator, GUI and oscilloscope for one TOML design.
+Builds the headless simulator and one PANELS/SCOPE/TERM GUI for a TOML design.
 The generated files are placed in BUILD (default: build-<name>).
 
 Environment:

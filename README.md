@@ -12,8 +12,8 @@ This initial project targets the existing FPGA and LVC profiles. It includes:
   digital resolution, hierarchical evaluation cache, and analyzer capture/export.
 - `liblcsim_symbols.a`: raylib controls, output/display/pixel presentation and
   waveform rendering.
-- `lcsim-gui`: one generated simulation/analyzer application. `PANELS` and
-  `SCOPE` switch views in the same process and retain the same simulation state.
+- `lcsim-gui`: one generated simulation/analyzer application. `PANELS`,
+  `SCOPE` and `TERM` switch views in the same process and retain the same simulation state.
 - `lcsim`: headless executable for regression tests, measurements and VCD export.
 
 The project is deliberately gate-level. Explicit NMOS/PMOS elements are rejected
@@ -40,6 +40,11 @@ make DESIGN=examples/cpu65c02.toml BUILD=build-cpu
 ./build-cpu/lcsim --technology fpga --steps 18000 --vcd cpu.vcd
 ./build-cpu/lcsim --technology lvc --steps 18000 --no-cache
 ```
+
+The [r11 terminal guide](docs/terminal-r11.md) adds a TERM view, a polling
+keyboard/display device and a working WozMon-style monitor computer. Build
+`examples/cpu65c02-term.toml` to use it; the original WozMon ROM and full
+65C02 ISA are not yet supported.
 
 The [r10 ALU selector fix](docs/cpu65c02-alu-selector-r10.md) replaces shared-output
 TBUFs with MUX4 to avoid transient contention when selecting an ALU operation.
@@ -92,13 +97,13 @@ scripts/build_tool.sh examples/cpu65c02.toml cpu65c02
 ./build-cpu65c02/lcsim-gui --scope --technology fpga
 ```
 
-Build both included examples with separate generated designs and caches:
+Build all three included examples with separate generated designs and caches:
 
 ```sh
 scripts/build_examples.sh
 ```
 
-This creates `build-counter/` and `build-cpu65c02/`, each containing
+This creates `build-counter/`, `build-cpu65c02/` and `build-cpu65c02-term/`, each containing
 `lcsim` (headless) and `lcsim-gui` (simulator/analyzer view). Set `RAYLIB_DIR`
 to use another checkout and `BUILD_ROOT`
 to choose the parent directory for `build_examples.sh`; `BUILD_DIR` chooses a
@@ -125,7 +130,7 @@ override `RAYLIB_DIR`, `RAYLIB_CFLAGS` and `RAYLIB_LIBS` explicitly.
 
 **Validation status:** the C++ engine and compiler were built and exercised with
 GCC, including the CPU self-test in both technologies. The frontend received a
-C++ syntax check using local API declarations, but this environment did not
+C++ syntax check against the official raylib 5.5 header, but this environment did not
 contain raylib/X11 development libraries or a display server. It has **not**
 been linked against real raylib or visually tested here. Do not interpret the
 headless test results as GUI verification.
@@ -194,6 +199,7 @@ appear as X; a separate C diagnostic channel is not exported.
 
 ## Documentation
 
+- [TERM, monitor commands and MMIO](docs/terminal-r11.md)
 - [Architecture and cache correctness](docs/architecture.md)
 - [TOML and simulation semantics](docs/format-and-timing.md)
 - [Verification and performance](docs/verification.md)

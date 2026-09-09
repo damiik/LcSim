@@ -19,3 +19,15 @@ class Compiler(unittest.TestCase):
  def test_multidriver(self):
   out=self.run_case('format_version=2\n[workspace]\ngates=[{t="H",o=1},{t="L",o=2},{t="BUF",i=[[1,2]],o=3}]')
   self.assertIn('e.in={1}',out)
+
+ def test_terminal(self):
+  import json
+  gate={'t':'TERMINAL','i':[0]*26,'o':list(range(1,9)),'io_base':0xd010}
+  def source():
+   return 'format_version=2\n[workspace]\ngates=[{'+', '.join(k+'='+json.dumps(v) for k,v in gate.items())+'}]'
+  self.assertIn('e.io_base=53264',self.run_case(source()))
+  for value in [-4,65536,1,True]:
+   gate['io_base']=value
+   with self.assertRaises(ValueError):self.run_case(source())
+  gate['io_base']=0xd010;gate['i']=[0]*25
+  with self.assertRaises(ValueError):self.run_case(source())

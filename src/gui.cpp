@@ -336,6 +336,48 @@ namespace lc  {
       text("dt: "+number(std::abs(cursorB-cursorA)/1000.)+" ns | "+(scope.frozen?"CAPTURED":scope.trigger_time<0?"WAITING":"TRIGGERED"),x+10,area.y+area.height-18,12,fg);
     }
   }
+  void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status) {
+    auto devices=sim.terminals();
+    if(devices.empty()) {
+      text("No TERMINAL device in this design",area.x+16,area.y+20,16,muted);
+      text("Build examples/cpu65c02-term.toml",area.x+16,area.y+62,12,muted);
+      return;
+    }
+    auto& name=devices.front().first;auto& terminal=*devices.front().second;
+    auto send=[&](const std::string& value) {
+      if(!sim.terminal_send(name,value))status="Keyboard queue full; paste not accepted";
+      else {status="Keyboard: "+std::to_string(terminal.keys.size())+" queued";scroll=0;}
+    };
+    bool ctrl=IsKeyDown(KEY_LEFT_CONTROL)||IsKeyDown(KEY_RIGHT_CONTROL);
+    if(button({area.x+8,area.y+4,100,36},"PASTE")||(ctrl&&IsKeyPressed(KEY_V))) {
+      const char* clipboard=GetClipboardText();if(clipboard)send(clipboard);
+    }
+    if(button({area.x+116,area.y+4,100,36},"COPY"))SetClipboardText(terminal.transcript.c_str());
+    if(button({area.x+224,area.y+4,100,36},"CLEAR")){terminal.clear();scroll=0;}
+    text(name+" | 40 columns | keyboard "+std::to_string(terminal.keys.size()),area.x+340,area.y+12,10,muted);
+    int key;
+    while((key=GetCharPressed())>0)if(!ctrl&&key>=32&&key<127)send(std::string(1,char(key)));
+    if(IsKeyPressed(KEY_ENTER))send("\r");
+    if(IsKeyPressed(KEY_BACKSPACE))send(std::string(1,char(8)));
+    if(IsKeyPressed(KEY_ESCAPE))send(std::string(1,char(27)));
+    Rectangle screen{area.x+16,area.y+54,area.width-32,area.height-64};
+    DrawRectangleRec(screen,{8,14,12,255});DrawRectangleLinesEx(screen,1,line);
+    float font_size=std::max(10.f,std::min({32.f,(screen.width-32)/25.f,(screen.height-24)/24.f}));
+    float line_height=font_size+3;
+    int rows=std::max(1,int((screen.height-16)/line_height));
+    int limit=std::max(0,int(terminal.lines.size())-rows);
+    scroll=std::clamp(scroll+int(GetMouseWheelMove()*3),0,limit);
+    int begin=std::max(0,int(terminal.lines.size())-rows-scroll);
+    BeginScissorMode(int(screen.x),int(screen.y),int(screen.width),int(screen.height));
+    for(int row=0;row<rows&&begin+row<int(terminal.lines.size());row++)
+      text(terminal.lines[size_t(begin+row)],screen.x+12,screen.y+8+row*line_height,font_size/2,green);
+    if(scroll==0&&int(GetTime()*2)%2==0) {
+      float x=MeasureTextEx(ui_font_loaded?ui_font:GetFontDefault(),terminal.lines.back().c_str(),font_size,0.5f).x;
+      float y=screen.y+8+(int(terminal.lines.size())-1-begin)*line_height;
+      DrawRectangleRec({screen.x+12+x,y+font_size-3,font_size*.6f,2},green);
+    }
+    EndScissorMode();
+  }
   int gui(const Design& design,Profile profile,bool scope_first,bool cache)  {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1440,900,("LcSim - "+design.name).c_str());
@@ -352,9 +394,12 @@ namespace lc  {
     sim->cache_enabled=cache;
     auto scope=std::make_unique<Scope>(*sim,design.scope);
     scope->configure(design.scope_config);
-    bool running=true,show_scope=scope_first,memory_tab=false;
+    enum class View { Panels, Scope, Term };
+    View view=scope_first?View::Scope:View::Panels;
+    bool running=true,memory_tab=false;
+    int terminal_scroll=0;
     int sidebar_scroll=0,memory_scroll=0,scope_scroll=0;
-    double target=1000,accumulator=0,actual=0,pan=0;
+    double target=sim->terminals().empty()?1000:100000,accumulator=0,actual=0,pan=0;
     Time cursorA=0,cursorB=0;
     std::string status="ready",editing,edit_value,selected_memory;
     std::map<std::string,std::vector<uint64_t>> memory_overrides;
@@ -410,11 +455,13 @@ namespace lc  {
         profile=profile.name=="LVC"?Profile::fpga():Profile::lvc();
         reset();
       }
-      if(button(  {
-        750,22,95,48
-      },show_scope?"PANELS":"SCOPE"))show_scope=!show_scope;
+      auto select_view=[&](View next){view=next;editing.clear();};
+      if(button({750,22,95,40},"PANELS",view==View::Panels))select_view(View::Panels);
+      if(button({853,22,95,40},"SCOPE",view==View::Scope))select_view(View::Scope);
+      if(button({956,22,85,40},"TERM",view==View::Term))select_view(View::Term);
+      bool show_scope=view==View::Scope;
       Rectangle slider  {
-        865,60,240,6
+        1060,60,250,6
       };
       DrawRectangleRec(slider,line);
       float pos=float(std::log10(target)/7);
@@ -423,7 +470,7 @@ namespace lc  {
         slider.x,45,slider.width,35
       }
       ))target=std::pow(10,std::clamp((GetMouseX()-slider.x)/slider.width,0.f,1.f)*7);
-      text("TARGET "+number(target)+" steps/s  ACTUAL "+number(actual),865,20,12,muted);
+      text("TARGET "+number(target)+" steps/s  ACTUAL "+number(actual),1060,20,8,muted);
       int side_width=show_scope?245:0;
       Rectangle side{0,91,float(side_width),float(height-139)};
       if(show_scope)  {
@@ -477,6 +524,7 @@ namespace lc  {
           status=e.what();
         }
       }
+      else if(view==View::Term)draw_terminal(*sim,workspace,terminal_scroll,status);
       else  {
         DrawText("Main workspace",int(workspace.x+8),int(workspace.y+8),28,muted);
         size_t input_index=0;

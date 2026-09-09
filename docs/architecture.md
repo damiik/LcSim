@@ -87,3 +87,10 @@ path and validates replacement images against their depth and data width.
 Replacing the active address refreshes the memory output through the normal gate
 evaluation path. This is used by the MEMORY tab and remains available to future
 headless system peripherals and debuggers.
+
+## Terminal peripheral
+
+The r11 TERMINAL gate is stateful and excluded from pure-module caches. GUI
+TERM and headless input/output use its shared runtime FIFO and transcript;
+neither bypasses CPU execution. MMIO reads hold one byte per read cycle and
+writes commit on /WR release. See [the terminal contract](terminal-r11.md).
