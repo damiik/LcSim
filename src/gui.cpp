@@ -336,48 +336,79 @@ namespace lc  {
       text("dt: "+number(std::abs(cursorB-cursorA)/1000.)+" ns | "+(scope.frozen?"CAPTURED":scope.trigger_time<0?"WAITING":"TRIGGERED"),x+10,area.y+area.height-18,12,fg);
     }
   }
-  void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status) {
-    auto devices=sim.terminals();
-    if(devices.empty()) {
-      text("No TERMINAL device in this design",area.x+16,area.y+20,16,muted);
-      text("Build examples/cpu65c02-term.toml",area.x+16,area.y+62,12,muted);
-      return;
-    }
-    auto& name=devices.front().first;auto& terminal=*devices.front().second;
-    auto send=[&](const std::string& value) {
-      if(!sim.terminal_send(name,value))status="Keyboard queue full; paste not accepted";
-      else {status="Keyboard: "+std::to_string(terminal.keys.size())+" queued";scroll=0;}
-    };
-    bool ctrl=IsKeyDown(KEY_LEFT_CONTROL)||IsKeyDown(KEY_RIGHT_CONTROL);
-    if(button({area.x+8,area.y+4,100,36},"PASTE")||(ctrl&&IsKeyPressed(KEY_V))) {
-      const char* clipboard=GetClipboardText();if(clipboard)send(clipboard);
-    }
-    if(button({area.x+116,area.y+4,100,36},"COPY"))SetClipboardText(terminal.transcript.c_str());
-    if(button({area.x+224,area.y+4,100,36},"CLEAR")){terminal.clear();scroll=0;}
-    text(name+" | 40 columns | keyboard "+std::to_string(terminal.keys.size()),area.x+340,area.y+12,10,muted);
-    int key;
-    while((key=GetCharPressed())>0)if(!ctrl&&key>=32&&key<127)send(std::string(1,char(key)));
-    if(IsKeyPressed(KEY_ENTER))send("\r");
-    if(IsKeyPressed(KEY_BACKSPACE))send(std::string(1,char(8)));
-    if(IsKeyPressed(KEY_ESCAPE))send(std::string(1,char(27)));
-    Rectangle screen{area.x+16,area.y+54,area.width-32,area.height-64};
-    DrawRectangleRec(screen,{8,14,12,255});DrawRectangleLinesEx(screen,1,line);
-    float font_size=std::max(10.f,std::min({32.f,(screen.width-32)/25.f,(screen.height-24)/24.f}));
-    float line_height=font_size+0;
-    int rows=std::max(1,int((screen.height-16)/line_height));
-    int limit=std::max(0,int(terminal.lines.size())-rows);
-    scroll=std::clamp(scroll+int(GetMouseWheelMove()*3),0,limit);
-    int begin=std::max(0,int(terminal.lines.size())-rows-scroll);
-    BeginScissorMode(int(screen.x),int(screen.y),int(screen.width),int(screen.height));
-    for(int row=0;row<rows&&begin+row<int(terminal.lines.size());row++)
-      text(terminal.lines[size_t(begin+row)],screen.x+12,screen.y+8+row*line_height,font_size/2,blue);
-    if(scroll==0&&int(GetTime()*2)%2==0) {
-      float x=MeasureTextEx(ui_font_loaded?ui_font:GetFontDefault(),terminal.lines.back().c_str(),font_size,0.5f).x;
-      float y=screen.y+8+(int(terminal.lines.size())-1-begin)*line_height;
-      DrawRectangleRec({screen.x+12+x,y+font_size-3,font_size*.6f,2},blue);
-    }
-    EndScissorMode();
+
+void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status)  {
+  (void)scroll; // screen grid replaced scroll-back history
+  auto devices=sim.terminals();
+  if(devices.empty())  {
+    text("No TERMINAL device in this design",area.x+16,area.y+20,16,muted);
+    text("Build examples/cpu65c02-term.toml",area.x+16,area.y+62,12,muted);
+    return;
   }
+  auto& name=devices.front().first;auto& terminal=*devices.front().second;
+  auto send=[&](const std::string& value)  {
+    if(!sim.terminal_send(name,value))status="Keyboard queue full; paste not accepted";
+    else status="Keyboard: "+std::to_string(terminal.keys.size())+" queued";
+  };
+  bool ctrl=IsKeyDown(KEY_LEFT_CONTROL)||IsKeyDown(KEY_RIGHT_CONTROL);
+  if(button({area.x+8,area.y+4,100,36},"PASTE")||(ctrl&&IsKeyPressed(KEY_V)))  {
+    const char* clipboard=GetClipboardText();if(clipboard)send(clipboard);
+  }
+  if(button({area.x+116,area.y+4,100,36},"COPY"))SetClipboardText(terminal.transcript.c_str());
+  if(button({area.x+224,area.y+4,100,36},"CLEAR"))terminal.clear();
+  if(button({area.x+332,area.y+4,90,36},"CRT",terminal.crt))terminal.crt=!terminal.crt;
+  text(name+" | 40x24 ANSI | cursor "+std::to_string(terminal.cursor_x)+","
+      +std::to_string(terminal.cursor_y)+" | keys "+std::to_string(terminal.keys.size()),
+      area.x+430,area.y+12,10,muted);
+  int key;
+  while((key=GetCharPressed())>0)if(!ctrl&&key>=32&&key<127)send(std::string(1,char(key)));
+  if(IsKeyPressed(KEY_ENTER))send("\r");
+  if(IsKeyPressed(KEY_BACKSPACE))send(std::string(1,char(8)));
+  if(IsKeyPressed(KEY_ESCAPE))send(std::string(1,char(27)));
+
+  Rectangle screen{area.x+16,area.y+54,area.width-32,area.height-64};
+  constexpr int cols=int(Terminal::columns),trows=int(Terminal::rows);
+  DrawRectangleRec(screen,{8,14,12,255});
+  DrawRectangleLinesEx(screen,1,line);
+  Font font=ui_font_loaded?ui_font:GetFontDefault();
+  float cell_w=(screen.width-28)/cols,cell_h=(screen.height-20)/trows;
+  float size=std::min(cell_w/0.62f,cell_h*.92f);      // proven GUI heuristic
+  float x0=screen.x+14,y0=screen.y+(screen.height-cell_h*trows)/2;
+  float yoff=(cell_h-size)*.45f;
+  Color phosphor=blue;
+  auto draw_rows=[&](Color tint,float dx,float dy)  { // whole rows, as before
+    for(int r=0;r<trows;r++)
+      text(terminal.screen[size_t(r)],x0+dx,y0+r*cell_h+yoff+dy,size/2,tint);
+  };
+  draw_rows(phosphor,0,0);
+  if(terminal.crt)  {
+    BeginBlendMode(BLEND_ADDITIVE);
+    draw_rows({phosphor.r,phosphor.g,phosphor.b,36},0,0);
+    draw_rows({phosphor.r,phosphor.g,phosphor.b,20},1.5f,1.f);
+    EndBlendMode();
+  }
+  if(int(GetTime()*2.5)%2==0)  {                      // cursor: measured from
+    const std::string& row=terminal.screen[terminal.cursor_y]; // same layout
+    float cx=x0+MeasureTextEx(font,row.substr(0,terminal.cursor_x).c_str(),size,.5f).x;
+    char under=terminal.cursor_x<row.size()?row[terminal.cursor_x]:' ';
+    float cw=under!=' '?std::max(4.f,MeasureTextEx(font,std::string(1,under).c_str(),size,1.0f).x):size*.62f;
+    float cy=y0+terminal.cursor_y*cell_h;
+    DrawRectangleRec({cx,cy,cw,cell_h},phosphor);
+    if(under!=' ')text(std::string(1,under),cx,cy+yoff,size/2,{8,14,12,255});
+  }
+  if(terminal.crt)  {
+    for(float sy=screen.y;sy<screen.y+screen.height-3;sy+=3)  { // soft scanlines
+      DrawRectangleRec({screen.x,sy,screen.width,1},{0,0,0,28});
+      DrawRectangleRec({screen.x,sy+1,screen.width,1},{0,0,0,85});
+      DrawRectangleRec({screen.x,sy+2,screen.width,1},{0,0,0,28});
+    }
+    // float vg=std::min(26.f,screen.width*.05f);
+    // DrawRectangleRec({screen.x,screen.y,screen.width,vg},{0,0,0,60});
+    // DrawRectangleRec({screen.x,screen.y+screen.height-vg,screen.width,vg},{0,0,0,60});
+    // DrawRectangleRec({screen.x,screen.y,vg,screen.height},{0,0,0,45});
+    // DrawRectangleRec({screen.x+screen.width-vg,screen.y,vg,screen.height},{0,0,0,45});
+  }
+}
   int gui(const Design& design,Profile profile,bool scope_first,bool cache)  {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1440,900,("LcSim - "+design.name).c_str());
@@ -467,7 +498,7 @@ namespace lc  {
       };
       DrawRectangleRec(slider,line);
       float pos=float(std::log10(target)/7);
-      DrawCircle(int(slider.x+pos*slider.width),63,6,blue);
+      DrawCircle(int(slider.x+pos*slider.width),63,6,green);
       if(IsMouseButtonDown(MOUSE_BUTTON_LEFT)&&CheckCollisionPointRec(GetMousePosition(),  {
         slider.x,45,slider.width,35
       }
@@ -537,7 +568,7 @@ namespace lc  {
           ++input_index;
           DrawRectangleRec({card_x,card_y,194,58},panel);
           DrawRectangleLinesEx({card_x,card_y,194,58},1,line);
-          text(p.name,card_x+8,card_y+6,12,blue);
+          text(p.name,card_x+8,card_y+6,12,green);
           text(sim->hex(p),card_x+8,card_y+28,16,green);
           if(p.nets.size()==1)  {
             for(int b=0;b<3;b++)if(button({card_x+96+30.f*b,card_y+20,27,26},b==2?"Z":std::to_string(b)))  {
