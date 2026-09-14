@@ -372,28 +372,38 @@ void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status
   DrawRectangleLinesEx(screen,1,line);
   Font font=ui_font_loaded?ui_font:GetFontDefault();
   float cell_w=(screen.width-28)/cols,cell_h=(screen.height-20)/trows;
-  float size=std::min(cell_w/0.62f,cell_h*.92f);      // proven GUI heuristic
-  float x0=screen.x+14,y0=screen.y+(screen.height-cell_h*trows)/2;
+  // measure "M" once at a reference size, derive size+pitch that always fit a cell
+  float ref=std::max(1.f,MeasureTextEx(font,"M",64.f,.5f).x);
+  float size=std::min(cell_h*.92f,cell_w*64.f/ref);   // real pixel size (text() halves it)
+  float pitch=ref*size/48.f;                          // ONE pitch: glyphs AND cursor
+  //float x0=screen.x+(screen.width-pitch*cols)/2;
+  float x0=screen.x+14;
+  //float pitch=cell_w;      // komórki wypełniają całą szerokość
+  float y0=screen.y+(screen.height-cell_h*trows)/2;
   float yoff=(cell_h-size)*.45f;
-  Color phosphor=blue;
-  auto draw_rows=[&](Color tint,float dx,float dy)  { // whole rows, as before
-    for(int r=0;r<trows;r++)
-      text(terminal.screen[size_t(r)],x0+dx,y0+r*cell_h+yoff+dy,size/2,tint);
+  Color phosphor=green;
+  auto draw_grid=[&](Color tint,float dx,float dy)  { // every glyph on the fixed grid
+    for(int r=0;r<trows;r++)  {
+      const std::string& row=terminal.screen[size_t(r)];
+      for(int c=0;c<cols;c++)  {
+        char ch=row[size_t(c)];
+        if(ch==' ')continue;
+        text(std::string(1,ch),x0+c*pitch+dx,y0+r*cell_h+yoff+dy,size/2,tint);
+      }
+    }
   };
-  draw_rows(phosphor,0,0);
+  draw_grid(phosphor,0,0);
   if(terminal.crt)  {
     BeginBlendMode(BLEND_ADDITIVE);
-    draw_rows({phosphor.r,phosphor.g,phosphor.b,36},0,0);
-    draw_rows({phosphor.r,phosphor.g,phosphor.b,20},1.5f,1.f);
+    draw_grid({phosphor.r,phosphor.g,phosphor.b,36},0,0);
+    draw_grid({phosphor.r,phosphor.g,phosphor.b,20},1.5f,1.f);
     EndBlendMode();
   }
-  if(int(GetTime()*2.5)%2==0)  {                      // cursor: measured from
-    const std::string& row=terminal.screen[terminal.cursor_y]; // same layout
-    float cx=x0+MeasureTextEx(font,row.substr(0,terminal.cursor_x).c_str(),size,.5f).x;
-    char under=terminal.cursor_x<row.size()?row[terminal.cursor_x]:' ';
-    float cw=under!=' '?std::max(4.f,MeasureTextEx(font,std::string(1,under).c_str(),size,1.0f).x):size*.62f;
-    float cy=y0+terminal.cursor_y*cell_h;
-    DrawRectangleRec({cx,cy,cw,cell_h},phosphor);
+  if(int(GetTime()*2.5)%2==0)  {                      // cursor on the SAME grid
+    float cx=x0+float(terminal.cursor_x)*pitch;
+    float cy=y0+float(terminal.cursor_y)*cell_h;
+    DrawRectangleRec({cx,cy,pitch,cell_h},phosphor);
+    char under=terminal.screen[terminal.cursor_y][terminal.cursor_x];
     if(under!=' ')text(std::string(1,under),cx,cy+yoff,size/2,{8,14,12,255});
   }
   if(terminal.crt)  {
@@ -402,11 +412,6 @@ void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status
       DrawRectangleRec({screen.x,sy+1,screen.width,1},{0,0,0,85});
       DrawRectangleRec({screen.x,sy+2,screen.width,1},{0,0,0,28});
     }
-    // float vg=std::min(26.f,screen.width*.05f);
-    // DrawRectangleRec({screen.x,screen.y,screen.width,vg},{0,0,0,60});
-    // DrawRectangleRec({screen.x,screen.y+screen.height-vg,screen.width,vg},{0,0,0,60});
-    // DrawRectangleRec({screen.x,screen.y,vg,screen.height},{0,0,0,45});
-    // DrawRectangleRec({screen.x+screen.width-vg,screen.y,vg,screen.height},{0,0,0,45});
   }
 }
   int gui(const Design& design,Profile profile,bool scope_first,bool cache)  {
