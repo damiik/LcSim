@@ -363,18 +363,18 @@ namespace lc  {
     Rectangle screen{area.x+16,area.y+54,area.width-32,area.height-64};
     DrawRectangleRec(screen,{8,14,12,255});DrawRectangleLinesEx(screen,1,line);
     float font_size=std::max(10.f,std::min({32.f,(screen.width-32)/25.f,(screen.height-24)/24.f}));
-    float line_height=font_size+3;
+    float line_height=font_size+0;
     int rows=std::max(1,int((screen.height-16)/line_height));
     int limit=std::max(0,int(terminal.lines.size())-rows);
     scroll=std::clamp(scroll+int(GetMouseWheelMove()*3),0,limit);
     int begin=std::max(0,int(terminal.lines.size())-rows-scroll);
     BeginScissorMode(int(screen.x),int(screen.y),int(screen.width),int(screen.height));
     for(int row=0;row<rows&&begin+row<int(terminal.lines.size());row++)
-      text(terminal.lines[size_t(begin+row)],screen.x+12,screen.y+8+row*line_height,font_size/2,green);
+      text(terminal.lines[size_t(begin+row)],screen.x+12,screen.y+8+row*line_height,font_size/2,blue);
     if(scroll==0&&int(GetTime()*2)%2==0) {
       float x=MeasureTextEx(ui_font_loaded?ui_font:GetFontDefault(),terminal.lines.back().c_str(),font_size,0.5f).x;
       float y=screen.y+8+(int(terminal.lines.size())-1-begin)*line_height;
-      DrawRectangleRec({screen.x+12+x,y+font_size-3,font_size*.6f,2},green);
+      DrawRectangleRec({screen.x+12+x,y+font_size-3,font_size*.6f,2},blue);
     }
     EndScissorMode();
   }
@@ -383,7 +383,9 @@ namespace lc  {
     InitWindow(1440,900,("LcSim - "+design.name).c_str());
     SetTargetFPS(60);
     SetExitKey(KEY_F10);
-    const char* font_paths[]={"assets/fonts/MapleMono-Regular.ttf","../assets/fonts/MapleMono-Regular.ttf"};
+    // const char* font_paths[]={"assets/fonts/MapleMono-Regular.ttf","../assets/fonts/MapleMono-Regular.ttf"};
+    // const char* font_paths[]={"assets/fonts/apple_ii.ttf","../assets/fonts/apple_ii.ttf"};
+    const char* font_paths[]={"assets/fonts/BerkeliumIIDHR.ttf","../assets/fonts/BerkeliumIIDHR.ttf"};
     for(const auto* path:font_paths)if(FileExists(path))  {
       ui_font=LoadFontEx(path,64,nullptr,0);
       ui_font_loaded=ui_font.texture.id!=0;

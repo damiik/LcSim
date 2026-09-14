@@ -20,3 +20,6 @@ lub headless:
   --technology lvc \
   --no-cache \
   --steps 1000000
+
+4. kompilacja przykładowego programu z wyjściem dla WozMon (format blk): 
+ ../../nim/logic_cosmos_cpu_tools/lcct asm --isa mos6502-safe --format blk ./examples/heart.asm -o heart.mem
