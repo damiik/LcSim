@@ -84,6 +84,7 @@ namespace lc  {
     struct Gate  {
       Element e;
       std::unique_ptr<Terminal> terminal;
+      bool terminal_key_latched=false;
       bool terminal_read=false,terminal_write=false,terminal_write_valid=false;
       int terminal_reg=-1,terminal_write_reg=-1;
       uint8_t terminal_read_value=0,terminal_write_value=0;
@@ -99,7 +100,8 @@ namespace lc  {
     };
     struct Group  {
       int definition;
-      std::vector<int> gates,children;
+      std::vector<int> gates,direct,children;
+      uint32_t dirty=0;
       bool pure=true;
     };
     struct Event  {
@@ -126,10 +128,13 @@ namespace lc  {
     std::vector<Group> groups;
     std::vector<Cache> caches;
     std::vector<Probe> views;
+    std::unordered_map<std::string,size_t> probe_index;
     std::vector<Net> parent;
     std::priority_queue<Event> queue;
     uint64_t sequence=0;
-    std::vector<bool> dirty;
+    std::vector<uint8_t> dirty;
+    std::vector<int> dirty_gates,dirty_groups;
+    std::vector<std::vector<int>> gate_groups;
     int root_group=0;
     bool has_switches=false,initializing=true;
     std::vector<Net> touched;
@@ -138,8 +143,9 @@ namespace lc  {
     void join(Net,Net);
     int flatten(const Design&,int,const std::vector<Net>&,const std::vector<Net>&,const std::string&,bool);
     void resolve();
+    void mark_dirty(int);
     void evaluate_dirty();
-    void evaluate_group(int,const std::vector<bool>&);
+    void evaluate_group(int,const std::vector<uint8_t>&);
     std::vector<Logic> evaluate_pure(const Gate&);
     void evaluate_stateful(int);
     void apply(int,const std::vector<Logic>&);

@@ -1,5 +1,8 @@
 # TERM and the monitor computer (r11)
 
+For the supplied ACIA WozMon running on the expanded CPU, see [r12](wozmon-r12.md).
+This document describes the backward-compatible Apple-1/LcMon example.
+
 TERM is a third view of the same `lcsim-gui` process, alongside PANELS and
 SCOPE. Switching views preserves the CPU, RAM, capture and terminal state.
 Keyboard/display logic belongs to the shared C++ simulator, so headless tests
@@ -43,9 +46,9 @@ clearing its input queue, controls and screen along with the simulator reset.
 The included `wozmon-lcsim.asm` is **LcMon, an independently implemented monitor
 with basic WozMon command syntax**. It is not the original 256-byte WozMon ROM
 and does not claim binary-compatible firmware or full Apple-1 emulation.
-The current CPU still implements the r8 non-decimal subset, including absolute
-loads/stores and JSR/RTS; absolute indexed/indirect addressing and several other
-instructions needed by the original monitor remain future work.
+LcMon originally targeted the r8 non-decimal subset, including absolute
+loads/stores and JSR/RTS. The r12 CPU adds the instructions needed by the
+supplied ACIA WozMon adaptation; that firmware has its own separate example.
 
 ```text
 0400: 41 42

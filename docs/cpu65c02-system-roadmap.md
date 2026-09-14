@@ -23,8 +23,9 @@ I/O/timer decoder and its original monitor map.
 The r8 TOML implements PC16, MAR16, reset-vector boot, unified RAM stack,
 absolute addressing and JSR/RTS. It adds ADH, a PCH bus driver, a four-bit STEP
 counter and a 45-bit control word. See [r8 implementation](cpu65c02-absolute-call.md).
-The toolchain has 107 forms / 54 mnemonics. Absolute indexed and indirect
-addressing, PHP/PLP and interrupts remain to be added. This is a **non-decimal
+The r12 toolchain has 113 forms / 55 mnemonics. It adds BIT zp, JMP (abs),
+LDA/STA (zp,X) and LDA/STA abs,Y. Other indexed/indirect forms, PHP/PLP and
+interrupts remain to be added. This is a **non-decimal
 65C02 subset**, not a complete 65C02 or KIM-1 emulator.
 
 LcSim itself already accepts RAM/ROM address widths up to 20 bits and data widths
@@ -89,7 +90,8 @@ The stateful TERMINAL peripheral occupies `$D010..$D013` in the separate
 `cpu65c02-term.toml` example. GUI and headless modes share its keyboard queue
 and display. See [device contract, build and monitor commands](terminal-r11.md).
 LcMon implements basic WozMon command syntax on the existing CPU subset.
-Running the original WozMon binary still requires additional CPU instructions.
+The supplied ACIA WozMon adaptation now runs in the separate
+[r12 terminal system](wozmon-r12.md), with its original instruction sequence.
 
 ## Milestone tests
 

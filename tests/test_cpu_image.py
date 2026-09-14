@@ -14,7 +14,7 @@ class CpuImage(unittest.TestCase):
         source = (ROOT / 'examples/cpu65c02.toml').read_text()
         program = image.hex_words((ROOT / 'examples/cpu65c02-absolute-call.hex').read_text())
         gates = tomllib.loads(source)['workspace']['gates']
-        control = next(g for g in gates if g.get('dw') == 45)
+        control = next(g for g in gates if g.get('dw') == 50)
         control_words = image.hex_words(control['m'])
         self.assertEqual(control_words[4096:], [image.BOOT_IDLE_R8] * 4096)
         # Installing the checked-in image and r8 bank is a byte-for-byte no-op.
@@ -26,7 +26,7 @@ class CpuImage(unittest.TestCase):
         for program in ([0] * 44, [0] * 4097, [256] * 4096):
             with self.assertRaises(ValueError):
                 image.update(source, program=program)
-        for control in ([0] * 2048, [1 << 45] * 4096):
+        for control in ([0] * 2048, [1 << 50] * 4096):
             with self.assertRaises(ValueError):
                 image.update(source, control=control)
 
@@ -55,11 +55,11 @@ class CpuImage(unittest.TestCase):
     def test_ambiguous_equal_image_is_rewritten(self):
         source = (ROOT / 'examples/cpu65c02.toml').read_text()
         gates = tomllib.loads(source)['workspace']['gates']
-        control = next(g for g in gates if g.get('dw') == 45)
+        control = next(g for g in gates if g.get('dw') == 50)
         words = image.hex_words(control['m'])[:4096]
         old = source.replace('0x', '')
         fixed = image.update(old, control=words)
-        self.assertIn('0x106180099773', fixed)
+        self.assertIn('0x0106180099773', fixed)
         self.assertNotEqual(old, fixed)
         self.assertEqual(image.update(fixed, control=words), fixed)
         for row in tomllib.loads(source)['workspace']['gates']:

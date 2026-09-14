@@ -16,11 +16,15 @@ BUILD_DIR="$BUILD_ROOT/build-cpu65c02" \
 BUILD_DIR="$BUILD_ROOT/build-cpu65c02-term" \
   "$SCRIPT_DIR/build_tool.sh" examples/cpu65c02-term.toml cpu65c02-term
 
+BUILD_DIR="$BUILD_ROOT/build-cpu65c02-wozmon" \
+  "$SCRIPT_DIR/build_tool.sh" examples/cpu65c02-wozmon.toml cpu65c02-wozmon
+
 cat <<EOF
 Built example tools:
   $BUILD_ROOT/build-counter/lcsim-gui
   $BUILD_ROOT/build-cpu65c02/lcsim-gui
   $BUILD_ROOT/build-cpu65c02-term/lcsim-gui
+  $BUILD_ROOT/build-cpu65c02-wozmon/lcsim-gui
 
 Run a GUI tool with, for example:
   $BUILD_ROOT/build-cpu65c02/lcsim-gui --technology lvc

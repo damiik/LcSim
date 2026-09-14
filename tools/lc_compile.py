@@ -3,7 +3,7 @@
 import argparse, json, math, pathlib, re, sys, tomllib
 PRIMITIVES = {'AND','OR','NOT','BUF','XOR','NAND','NOR','DFF','D_LATCH','MUX2','MUX4','DMUX2','DMUX4','OC','TBUF','SW','SWITCH','H','L','PULLUP','PULLDOWN','PULL','CLK','NODE','INOUT','BUS','DISPLAY','OSCILLOSCOPE','ROM','RAM','TERMINAL'}
 FIXED = {'TERMINAL':(26,8),'NOT':(1,1),'BUF':(1,1),'OC':(1,1),'DFF':(2,2),'D_LATCH':(2,2),'MUX2':(3,1),'MUX4':(6,1),'DMUX2':(2,2),'DMUX4':(3,4),'TBUF':(2,1),'SW':(3,2),'SWITCH':(3,2),'H':(0,1),'L':(0,1),'PULLUP':(0,1),'PULL':(0,1),'PULLDOWN':(0,1),'CLK':(0,1),'NODE':(1,1),'INOUT':(1,1)}
-FIELDS=set('t io_base n i o x y cd nnp nsh nsz non nof nsn nst nbo hd color pc pd tsu th p aw dw delay_ns eal m mf dm bl bm in on ix s k d'.split())
+FIELDS=set('t io_base io_mode n i o x y cd nnp nsh nsz non nof nsn nst nbo hd color pc pd tsu th p aw dw delay_ns eal m mf dm bl bm in on ix s k d'.split())
 def wirelist(v):
  if v is None:return []
  if isinstance(v,int) and not isinstance(v,bool):v=[v]
@@ -100,6 +100,7 @@ def compile_file(path, output):
     aw=r.get('aw',4);dw=r.get('dw',8)
     if type(aw)!=int or not 1<=aw<=20 or type(dw)!=int or not 1<=dw<=64:raise ValueError('memory widths: address 1..20, data 1..64')
     expected=(aw+1 if t=='ROM' else aw+dw+2,dw)
+   if t=='TERMINAL' and r.get('io_mode','apple1') not in ['apple1','acia']:raise ValueError('terminal io_mode must be apple1 or acia')
    if t=='TERMINAL' and (type(r.get('io_base',0xd010))!=int or not 0<=r.get('io_base',0xd010)<=65532 or r.get('io_base',0xd010)%4):raise ValueError('terminal io_base must be a 4-byte aligned 16-bit address')
    if t=='TERMINAL' and (len(r['i']),len(r['o']))!=(26,8):raise ValueError('terminal needs 26 input and 8 output ports')
    if expected and (len(r['i'])>expected[0] or len(r['o'])>expected[1]):raise ValueError(f'{k}/{t}: too many ports, expected {expected}')
@@ -112,6 +113,7 @@ def compile_file(path, output):
    lines+=[' { Element e; e.type='+q('MODULE' if module>=0 else {'DFF':'D_FF','SW':'SWITCH','PULL':'PULLUP'}.get(t,t))+'; e.name='+q(element_name)+'; e.in='+vec(r['i'])+'; e.out='+vec(r['o'])+'; e.module='+str(module)+';']
    for source,target in [('io_base','io_base'),('pc','cycles'),('pd','ns'),('tsu','setup'),('th','hold'),('aw','aw'),('dw','dw'),('delay_ns','memory_ns'),('x','x'),('y','y'),('nsz','size')]:
     if source in r:lines+=[' e.'+target+'='+str(r[source])+';']
+   if t=='TERMINAL':lines+=[' e.io_mode='+q(r.get('io_mode','apple1'))+';']
    if t=='CLK':
     period=r.get('p',r.get('n','10'))
     try:period=int(period)

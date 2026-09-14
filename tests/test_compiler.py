@@ -29,5 +29,9 @@ class Compiler(unittest.TestCase):
   for value in [-4,65536,1,True]:
    gate['io_base']=value
    with self.assertRaises(ValueError):self.run_case(source())
-  gate['io_base']=0xd010;gate['i']=[0]*25
+  gate['io_base']=0xd010;gate['io_mode']='acia'
+  self.assertIn('e.io_mode="acia"',self.run_case(source()))
+  gate['io_mode']='unsupported'
+  with self.assertRaises(ValueError):self.run_case(source())
+  gate['io_mode']='acia';gate['i']=[0]*25
   with self.assertRaises(ValueError):self.run_case(source())

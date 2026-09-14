@@ -78,3 +78,7 @@ not a replacement schematic editor.
 The LcSim-only `TERMINAL` extension has fixed A[16], Din[8], /RD, /WR inputs
 and Dout[8] outputs. `io_base` selects four aligned registers. It is stateful
 and cannot be result-cached. See [the exact MMIO/timing contract](terminal-r11.md).
+
+In r12, `io_mode="acia"` selects the polling ACIA register contract;
+`io_mode="apple1"` remains the default. `io_base` remains explicit.
+See [r12 registers and limits](wozmon-r12.md).

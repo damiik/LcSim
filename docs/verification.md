@@ -102,3 +102,31 @@ checked-in monitor on the real flattened CPU: keyboard input, RAM store/range
 read, and a program entered into RAM which prints `!` and jumps back to the
 monitor. All four technology/cache combinations must produce identical text.
 `make test-cpu` retains the previous stack/reset/absolute/call regressions.
+
+## r12 WozMon verification
+
+See [r12 tests and boundaries](wozmon-r12.md). Six instruction forms are tested
+in the Nim oracle, C++ LVC/FPGA (cache on/off), and TypeScript LVC/FPGA. The
+full supplied ACIA monitor is tested with real keyboard MMIO, RAM writes and
+execution of an entered RAM program. Its fixed TX delay is removed; the scripted
+store/examine/run regression completes after 469,500 ticks in every
+technology/cache combination.
+
+## Sparse dirty evaluation benchmark
+
+GCC `-O3` profiling showed that full dirty-mask/group traversal consumed about
+92% of the CPU fixture's host time. The engine now queues newly dirty gates and
+marks only their containing hierarchy groups. On the same run of the existing
+20,000-step CPU regression, while retaining identical timestamped transition
+hashes, measured time changed as follows:
+
+| Profile | Cache | Before | Sparse dirty | Speed-up |
+| --- | --- | ---: | ---: | ---: |
+| LVC | off | 1.257 s | 0.088 s | 14.3x |
+| LVC | on | 0.459 s | 0.088 s | 5.2x |
+| FPGA | off | 1.168 s | 0.087 s | 13.4x |
+| FPGA | on | 0.452 s | 0.088 s | 5.1x |
+
+These are local comparative measurements, not portable performance promises.
+The trace hashes, RAM signatures and final PC/S values are the correctness
+criteria; elapsed time is diagnostic only.

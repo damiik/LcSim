@@ -41,10 +41,15 @@ make DESIGN=examples/cpu65c02.toml BUILD=build-cpu
 ./build-cpu/lcsim --technology lvc --steps 18000 --no-cache
 ```
 
+The [r12 WozMon guide](docs/wozmon-r12.md) runs the supplied ACIA Woz monitor
+at `$FF00` with six additional CPU forms and the `$5000..$5003` terminal mode.
+Use `scripts/build_tool.sh examples/cpu65c02-wozmon.toml cpu65c02-wozmon`.
+Its matching control LUT is now 4096 x 50 bits.
+
 The [r11 terminal guide](docs/terminal-r11.md) adds a TERM view, a polling
 keyboard/display device and a working WozMon-style monitor computer. Build
-`examples/cpu65c02-term.toml` to use it; the original WozMon ROM and full
-65C02 ISA are not yet supported.
+`examples/cpu65c02-term.toml` to use it; that example uses LcMon; the supplied ACIA WozMon is supported by the separate
+r12 example. A full 65C02 ISA is still not implemented.
 
 The [r10 ALU selector fix](docs/cpu65c02-alu-selector-r10.md) replaces shared-output
 TBUFs with MUX4 to avoid transient contention when selecting an ALU operation.
@@ -62,7 +67,8 @@ See [r8 instructions, signatures and ROM loading](docs/cpu65c02-absolute-call.md
 `make test-cpu` also executes the previous r7 program. Use the matching r8 Nim
 patch to generate the new 4096×45-bit control image, then install it with
 `tools/cpu65c02_image.py`, which supplies the boot bank. This is still a
-non-decimal 65C02 subset; indirect addressing and interrupts remain future work.
+non-decimal 65C02 subset. r12 adds JMP (abs), LDA/STA (zp,X), LDA/STA abs,Y
+and BIT zp; other missing addressing forms and interrupts remain future work.
 
 ## Generate and link explicitly
 
@@ -97,13 +103,13 @@ scripts/build_tool.sh examples/cpu65c02.toml cpu65c02
 ./build-cpu65c02/lcsim-gui --scope --technology fpga
 ```
 
-Build all three included examples with separate generated designs and caches:
+Build all four included examples with separate generated designs and caches:
 
 ```sh
 scripts/build_examples.sh
 ```
 
-This creates `build-counter/`, `build-cpu65c02/` and `build-cpu65c02-term/`, each containing
+This creates `build-counter/`, `build-cpu65c02/`, `build-cpu65c02-term/` and `build-cpu65c02-wozmon/`, each containing
 `lcsim` (headless) and `lcsim-gui` (simulator/analyzer view). Set `RAYLIB_DIR`
 to use another checkout and `BUILD_ROOT`
 to choose the parent directory for `build_examples.sh`; `BUILD_DIR` chooses a
@@ -199,6 +205,7 @@ appear as X; a separate C diagnostic channel is not exported.
 
 ## Documentation
 
+- [ACIA WozMon and r12 CPU instructions](docs/wozmon-r12.md)
 - [TERM, monitor commands and MMIO](docs/terminal-r11.md)
 - [Architecture and cache correctness](docs/architecture.md)
 - [TOML and simulation semantics](docs/format-and-timing.md)

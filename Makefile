@@ -60,3 +60,19 @@ $(BUILD)/term.cpp: examples/cpu65c02-term.toml tools/lc_compile.py | $(BUILD)
 test-term-cpu: $(BUILD)/term.cpp $(BUILD)/liblcsim.a
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/terminal_cpu.cpp $^ -o $(BUILD)/test-term-cpu
 	$(BUILD)/test-term-cpu
+
+.PHONY: test-woz-instructions
+test-woz-instructions: $(BUILD)/cpu.cpp $(BUILD)/liblcsim.a
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) tests/woz_instructions.cpp $^ -o $(BUILD)/test-woz-instructions
+	$(BUILD)/test-woz-instructions
+
+.PHONY: test-wozmon
+$(BUILD)/woz.cpp: examples/cpu65c02-wozmon.toml tools/lc_compile.py | $(BUILD)
+	$(PYTHON) tools/lc_compile.py "$<" "$@"
+$(BUILD)/test-wozmon: tests/wozmon.cpp $(BUILD)/woz.cpp $(BUILD)/liblcsim.a
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@
+test-wozmon: $(BUILD)/test-wozmon
+	$(BUILD)/test-wozmon lvc 0
+	$(BUILD)/test-wozmon lvc 1
+	$(BUILD)/test-wozmon fpga 0
+	$(BUILD)/test-wozmon fpga 1

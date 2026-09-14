@@ -21,6 +21,15 @@ even if its logical value does not change. The no-switch path resolves only
 modified nets; networks with SW use a passive connectivity pass. UI refresh is
 independent of simulation steps, with a bounded per-frame work budget.
 
+Gate evaluation is sparse. A resolved net marks only its users dirty, and each
+newly dirty gate marks the hierarchy groups that contain it. An event batch then
+visits only marked groups and their direct gates. The previous implementation
+copied a full `vector<bool>` for every visited group and repeatedly subtracted
+all child gates; profiling the CPU fixture attributed about 92% of host time to
+that traversal and its copies. The sparse lists preserve event ordering and the
+cache signature while making cost follow the affected cone rather than the
+whole flattened design.
+
 Sequential outputs begin at zero. Startup settles the combinational network
 with DFF edge capture suppressed and clocks stationary high, then establishes
 virtual time zero and starts the clock events. This avoids manufacturing clock
@@ -65,7 +74,27 @@ RSS. Cache lookup, key creation and scheduling still cost CPU time. A cache may
 hurt a design with little repetition; `--no-cache` provides a direct baseline.
 A new simulator/reset/technology selection creates a fresh cache.
 
+After sparse dirty evaluation, the current CPU benchmark is essentially equal
+with cache enabled or disabled. That is expected: most event batches touch only
+a few gates, so constructing a module cache key can cost as much as evaluating
+the small affected cone. The cache remains useful infrastructure for wider,
+repetitive combinational activity; it is not treated as an unconditional win.
+
 ## Extending the optimization
+
+The next engine optimization with the clearest potential is the SW resolver.
+Designs containing any enabled `SWITCH` currently rebuild passive connectivity
+and driver accumulators across all nets for each changed event batch. Maintaining
+dirty switch-connected components would make this local. It needs dedicated
+tests for topology changes, X enables, strengths and multiple drivers before it
+can replace the conservative global pass.
+
+Smaller possible gains are typed gate opcodes instead of repeated string
+comparisons, allocation-free small input/output buffers, and a name-to-probe
+index for intensive debugger queries. A worker-thread GUI runner could use a
+second core, but requires a snapshot boundary for scope, terminal and memory
+edits; changing the current 8 ms per-frame budget alone would trade UI latency
+for throughput rather than improve the engine.
 
 A future settled combinational-region cache could store input transitions and
 complete relative-time output waveforms, with a proven cancellation/rollback

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Install ROM hex into the r7/r8 CPU without reformatting the user's schematic.
+"""Install ROM hex into the r7/r8/r12 CPU without reformatting the user's schematic.
 
 Program images are offsets from F000 (up to 4096 bytes, including reset vector).
-Control images: r7 uses 2048 x 42 bits; r8 uses 4096 x 45 bits.
+Control images: r7 uses 2048 x 42 bits; r8 uses 4096 x 45 bits; r12 uses 4096 x 50 bits.
+r13 uses 4096 x 48 bits.
 The destination ROM determines the required format; its boot bank is rebuilt.
 """
 import argparse
@@ -10,7 +11,8 @@ import json
 from pathlib import Path
 import re
 import tomllib
-
+#0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 0000
+#0000 0000 0110 0000 0000 0000 0000 1001 1111 0111 1111 0001
 BOOT_IDLE = 0x600009F7F1
 BOOT_IDLE_R8 = BOOT_IDLE | (1 << 44)  # Release active-low PCH_OE_N during boot.
 STRING = r'"(?:[^"\\]|\\.)*"'
@@ -47,21 +49,21 @@ def update(text, program=None, control=None):
         kind = row.get('t', kind)
         if kind != 'ROM':
             continue
-        label = 'program' if row.get('dw', 8) == 8 else 'control' if row.get('dw') in (42, 45) else ''
+        label = 'program' if row.get('dw', 8) == 8 else 'control' if row.get('dw') in (42, 45, 48, 50) else ''
         if label not in replacements:
             continue
         width = row.get('dw', 8)
-        expected_aw = 13 if width == 45 else 12
+        expected_aw = 13 if width in (45, 48, 50) else 12
         if row.get('aw') != expected_aw or 'mf' in row:
             raise ValueError(f'expected inline {width}-bit ROM with aw={expected_aw}')
         if label in found:
             raise ValueError('ambiguous ROM: ' + label)
         values = replacements[label]
         if label == 'control':
-            count = 4096 if width == 45 else 2048
+            count = 4096 if width in (45, 48, 50) else 2048
             if len(values) != count or any(not 0 <= w < (1 << width) for w in values):
                 raise ValueError(f'control image must be {count} words of {width} bits')
-            idle = BOOT_IDLE_R8 if width == 45 else BOOT_IDLE
+            idle = BOOT_IDLE_R8 if width in (45, 48, 50) else BOOT_IDLE
             values = values + [idle] * count
         # Always make the radix explicit: LogicCosmos accepts decimal bare
         # digits, whereas the LcSim compiler treats bare memory words as hex.
@@ -113,7 +115,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('toml', type=Path)
     parser.add_argument('--program', type=Path, help='hex bytes, offsets from F000')
-    parser.add_argument('--control', type=Path, help='r7: 2048x42 or r8: 4096x45 lcct control hex')
+    parser.add_argument('--control', type=Path, help='r7: 2048x42 or r8: 4096x45 or r12: 4096x50 lcct control hex')
     parser.add_argument('-o', '--output', type=Path, help='default: update TOML in place')
     parser.add_argument('--canonical-hex', action='store_true',
                         help='make all inline LcSim memory words explicit hex; preserves layout')

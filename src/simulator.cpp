@@ -50,7 +50,7 @@ namespace lc  {
     for(size_t i=0; i<outs.size(); i++)join(outs[i],map.at(m.out.at(i)));
     int group=static_cast<int>(groups.size());
     groups.push_back(  {
-      def,  {},  {},true
+      def,  {},  {},  {},0,true
     }
     );
     std::unordered_map<std::string,Net> named;
@@ -103,10 +103,11 @@ namespace lc  {
         gate.drivers.push_back(di);
       }
       if(top&&e.type=="INPUT")views.back().drivers=gate.drivers;
-      if(e.type=="TERMINAL")gate.terminal=std::make_unique<Terminal>();
+      if(e.type=="TERMINAL")gate.terminal=std::make_unique<Terminal>(e.io_mode=="acia");
       if(e.type=="ROM"||e.type=="RAM")gate.e.memory.resize(size_t(1)<<e.aw);
       gates.push_back(std::move(gate));
       groups[group].gates.push_back(id);
+      groups[group].direct.push_back(id);
       groups[group].pure=groups[group].pure&&pure(e.type);
     }
     return group;
@@ -126,6 +127,10 @@ namespace lc  {
       nets[dr.net].drivers.push_back(static_cast<int>(i));
     }
     for(size_t i=0; i<gates.size(); i++)for(Net n:gates[i].e.in)nets[n].users.push_back(static_cast<int>(i));
+    for(auto& net:nets)  {
+      std::sort(net.users.begin(),net.users.end());
+      net.users.erase(std::unique(net.users.begin(),net.users.end()),net.users.end());
+    }
     for(auto& pview:views)for(auto& n:pview.nets)n=root(n);
     // Explicitly named decimal suffixes form little-endian logical buses.
     std::map<std::string,std::map<unsigned,const Probe*>> buses;
@@ -166,7 +171,14 @@ namespace lc  {
       return !p.visual.pixel&&!seen.insert(p.name).second;
     }
     ),views.end());
-    dirty.resize(gates.size(),true);
+    for(size_t i=0;i<views.size();i++)probe_index.emplace(views[i].name,i);
+    dirty.resize(gates.size(),false);
+    dirty_gates.reserve(gates.size());
+    dirty_groups.reserve(groups.size());
+    gate_groups.resize(gates.size());
+    for(size_t group=0;group<groups.size();group++)
+      for(int gate:groups[group].gates)gate_groups[gate].push_back(static_cast<int>(group));
+    for(size_t gate=0;gate<gates.size();gate++)mark_dirty(static_cast<int>(gate));
     for(size_t i=0; i<gates.size(); i++)  {
       auto& g=gates[i];
       auto t=g.e.type;
@@ -229,7 +241,7 @@ namespace lc  {
         if(v==nets[n].value&&is_weak==nets[n].weak)continue;
         nets[n].value=v;
         nets[n].weak=is_weak;
-        for(int g:nets[n].users)dirty[g]=true;
+        for(int g:nets[n].users)mark_dirty(g);
         if(observe)observe(  {
           now,n,v
         }
@@ -285,7 +297,7 @@ namespace lc  {
       if(v!=nets[n].value||is_weak!=nets[n].weak)  {
         nets[n].value=v;
         nets[n].weak=is_weak;
-        for(int g:nets[n].users)dirty[g]=true;
+        for(int g:nets[n].users)mark_dirty(g);
         if(observe)observe(  {
           now,n,v
         }
@@ -417,12 +429,13 @@ namespace lc  {
       const bool read=reg>=0&&v[24]==Logic::L&&v[25]==Logic::H;
       const bool write=reg>=0&&v[25]==Logic::L&&v[24]==Logic::H;
       if(g.terminal_read&&(!read||reg!=g.terminal_reg)) {
-        if(g.terminal_reg==0&&g.terminal_read_value&0x80)g.terminal->consume();
+        if(g.terminal_key_latched)g.terminal->consume();
         g.terminal_read=false;
       }
       if(read&&!g.terminal_read) {
         g.terminal_read=true;g.terminal_reg=reg;
         g.terminal_read_value=g.terminal->read(unsigned(reg));
+        g.terminal_key_latched=reg==0&&!g.terminal->keys.empty();
       }
       // Commit once on a clean /WR rising edge. Address/data may settle while low.
       if(g.terminal_write&&!write) {
@@ -471,8 +484,17 @@ namespace lc  {
       }
     }
   }
-  void Simulator::evaluate_group(int id,const std::vector<bool>& work)  {
+  void Simulator::mark_dirty(int gate)  {
+    if(dirty[gate])return;
+    dirty[gate]=1;
+    dirty_gates.push_back(gate);
+    for(int group:gate_groups[gate])  {
+      if(groups[group].dirty++==0)dirty_groups.push_back(group);
+    }
+  }
+  void Simulator::evaluate_group(int id,const std::vector<uint8_t>& work)  {
     auto& group=groups[id];
+    if(group.dirty==0)return;
     if(cache_enabled&&group.pure&&group.gates.size()>=2)  {
       // Exact per-event-batch signature includes INTERNAL inputs and the dirty mask.
       // Cache replays evaluations, never time or pending state; inertial scheduling stays authoritative.
@@ -499,12 +521,10 @@ namespace lc  {
       }
       stats.misses++;
       // Recurse first: a larger module can learn from already cached child modules.
-      std::vector<bool> direct=work;
       for(int child:group.children)  {
         evaluate_group(child,work);
-        for(int g:groups[child].gates)direct[g]=false;
       }
-      for(int g:group.gates)if(direct[g])apply(g,evaluate_pure(gates[g]));
+      for(int g:group.direct)if(work[g])apply(g,evaluate_pure(gates[g]));
       std::vector<Result> plan;
       size_t bytes=key.size()+128;
       for(int k:active)  {
@@ -521,20 +541,23 @@ namespace lc  {
       }
       return;
     }
-    std::vector<bool> direct=work;
     for(int child:group.children)  {
       evaluate_group(child,work);
-      for(int g:groups[child].gates)direct[g]=false;
     }
-    for(int g:group.gates)if(direct[g])  {
+    for(int g:group.direct)if(work[g])  {
       if(pure(gates[g].e.type))apply(g,evaluate_pure(gates[g]));
       else evaluate_stateful(g);
     }
   }
   void Simulator::evaluate_dirty()  {
-    auto work=dirty;
-    std::fill(dirty.begin(),dirty.end(),false);
-    evaluate_group(root_group,work);
+    if(dirty_gates.empty())return;
+    // Evaluation can schedule events, but it cannot resolve nets immediately.
+    // Keep this batch immutable until every affected hierarchy level has used it.
+    evaluate_group(root_group,dirty);
+    for(int gate:dirty_gates)dirty[gate]=0;
+    for(int group:dirty_groups)groups[group].dirty=0;
+    dirty_gates.clear();
+    dirty_groups.clear();
   }
   void Simulator::advance(Time duration)  {
     if(duration<0)throw std::runtime_error("negative duration");
@@ -575,7 +598,7 @@ namespace lc  {
           g.ready=true;
           g.settled_address=g.address;
           if(g.address>=0)g.read_word=g.e.memory[static_cast<size_t>(g.address)];
-          dirty[e.id]=true;
+          mark_dirty(e.id);
         }
         else if(e.kind==3)  {
           auto& g=gates[e.id];
@@ -591,8 +614,8 @@ namespace lc  {
     now=end;
   }
   const Probe* Simulator::find(const std::string& name)const  {
-    for(const auto& p:views)if(p.name==name)return &p;
-    return nullptr;
+    auto it=probe_index.find(name);
+    return it==probe_index.end()?nullptr:&views[it->second];
   }
   void Simulator::drive(const std::string& name,const std::string& text)  {
     auto p=find(name);
@@ -662,7 +685,7 @@ namespace lc  {
       std::fill(g.e.memory.begin(),g.e.memory.end(),0);
       std::copy(values.begin(),values.end(),g.e.memory.begin());
       if(g.ready&&g.settled_address>=0)g.read_word=g.e.memory[static_cast<size_t>(g.settled_address)];
-      dirty[id]=true;
+      mark_dirty(static_cast<int>(id));
       advance(0);
       return;
     }
@@ -675,7 +698,7 @@ namespace lc  {
   }
   bool Simulator::terminal_send(const std::string& name,const std::string& text) {
     for(size_t i=0;i<gates.size();i++)if(gates[i].terminal&&gates[i].path==name) {
-      bool accepted=gates[i].terminal->send(text);dirty[i]=true;advance(0);return accepted;
+      bool accepted=gates[i].terminal->send(text);mark_dirty(static_cast<int>(i));advance(0);return accepted;
     }
     throw std::runtime_error("unknown terminal: "+name);
   }
