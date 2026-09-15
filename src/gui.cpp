@@ -421,7 +421,7 @@ void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status
     SetExitKey(KEY_F10);
     // const char* font_paths[]={"assets/fonts/MapleMono-Regular.ttf","../assets/fonts/MapleMono-Regular.ttf"};
     // const char* font_paths[]={"assets/fonts/apple_ii.ttf","../assets/fonts/apple_ii.ttf"};
-    const char* font_paths[]={"assets/fonts/BerkeliumIIDHR.ttf","../assets/fonts/BerkeliumIIDHR.ttf"};
+    const char* font_paths[]={"assets/fonts/MapleMono-Regular.ttf","../assets/fonts/BerkeliumIIHGR.ttf"};
     for(const auto* path:font_paths)if(FileExists(path))  {
       ui_font=LoadFontEx(path,64,nullptr,0);
       ui_font_loaded=ui_font.texture.id!=0;
