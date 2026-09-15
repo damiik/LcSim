@@ -36,14 +36,23 @@ public:
     std::vector<uint8_t> encoded;
     bool cr=false;
     for(unsigned char c:text) {
-      if(c=='\n'&&cr){cr=false;continue;}
-      cr=c=='\r';if(c=='\n')c='\r';
+      if(c=='\n'&&cr){cr=false;continue;}   // CRLF -> jedno LF
+      cr=c=='\r';
+      if(c=='\r')c='\n';                    // normalizacja: CR i LF -> LF (Linux)
       if(c>='a'&&c<='z')c-=32;
       if(c==8||c==127)c=acia?8:'_';
-      if(c==8||c=='\r'||c==27||(c>=32&&c<127))encoded.push_back(acia?c:c|0x80);
+      if(c==8||c=='\n'||c==27||(c>=32&&c<127))encoded.push_back(acia?c:c|0x80);
     }
     if(keys.size()+encoded.size()>input_limit){dropped+=encoded.size();return false;}
     keys.insert(keys.end(),encoded.begin(),encoded.end());return true;
+  }
+  // Wklejanie tekstow (pliki HEX/komendy): gwarantuje koncowy LF, zeby
+  // loader Intel HEX rozpoznal koniec ostatniego rekordu. Wywolywac
+  // z handlera wklejania zamiast send().
+  bool paste(const std::string& text) {
+    std::string t=text;
+    if(!t.empty() && t.back()!='\n' && t.back()!='\r') t+='\n';
+    return send(t);
   }
   uint8_t read(unsigned reg) const {
     if(acia) {

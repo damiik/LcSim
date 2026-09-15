@@ -1,8 +1,11 @@
 ; Woz monitor ACIA adaptation supplied by the user (Ben Eater version).
 ; The leading byte pads the F000-based ROM; instructions are unchanged.
+; WARIANT LF: terminator wiersza to $0A zamiast $0D - w NEXTCHAR (wprowadzanie)
+; i w NEXTITEM (skan bufora po Enterze); terminal wysyla wylacznie LF.
 .org $F000
 .byte $00
 .org $FF00
+
 XAML=$24
 XAMH=$25
 STL=$26
@@ -12,10 +15,12 @@ H=$29
 YSAV=$2A
 MODE=$2B
 IN=$0200
+
 ACIA_DATA=$5000
 ACIA_STATUS=$5001
 ACIA_CMD=$5002
 ACIA_CTRL=$5003
+
 RESET:
  LDA #$1F
  STA ACIA_CTRL
@@ -29,6 +34,7 @@ NOTCR:
  BEQ ESCAPE
  INY
  BPL NEXTCHAR
+
 ESCAPE:
  LDA #$5C
  JSR ECHO
@@ -46,7 +52,7 @@ NEXTCHAR:
  LDA ACIA_DATA
  STA IN,Y
  JSR ECHO
- CMP #$0D
+ CMP #$0A ; LF -> CR+LF (Linux)
  BNE NOTCR
  LDY #$FF
  LDA #$00
@@ -60,7 +66,7 @@ BLSKIP:
  INY
 NEXTITEM:
  LDA IN,Y
- CMP #$0D
+ CMP #$0A; LF -> CR+LF (Linux)
  BEQ GETLINE
  CMP #$2E
  BCC BLSKIP
