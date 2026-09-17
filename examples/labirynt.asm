@@ -43,6 +43,7 @@ START:
         STA SCORE
         STA MOVES
         JSR CLS
+        JSR HIDECUR
 
         LDA #1         ; tytul w wierszu 1
         STA GOROW
@@ -85,7 +86,7 @@ START:
         JSR GOTOXY
         LDA #'@'
         STA ACIA_DATA
-        JSR PARKCUR
+        ;JSR PARKCUR
 
 MAIN:
         LDA ACIA_STATUS
@@ -144,7 +145,7 @@ APPLY:
         JSR GOTOXY
         LDA #'@'
         STA ACIA_DATA
-        JSR PARKCUR    ; kursor na dol, zeby nie migal na mapie
+        ;JSR PARKCUR    ; kursor na dol, zeby nie migal na mapie
         BRA MAIN
 
 QUIT:
@@ -159,6 +160,7 @@ QUIT:
         STA TXTH
         JSR PRTXT
         JSR PARKCUR
+        JSR SHOWCUR
         JMP $FF00      ; powrot do WozMon
 
 ; ---------- procedury wyjsciowe ----------
@@ -201,6 +203,36 @@ PARKCUR:               ; zaparkuj kursor w rogu 23;1
         LDA #1
         STA GOCOL
         BRA GOTOXY     ; tail-call
+
+HIDECUR:               ; ESC[?25l - ukryj kursor
+        LDA #$1B
+        STA ACIA_DATA
+        LDA #'['
+        STA ACIA_DATA
+        LDA #'?'
+        STA ACIA_DATA
+        LDA #'2'
+        STA ACIA_DATA
+        LDA #'5'
+        STA ACIA_DATA
+        LDA #'l'
+        STA ACIA_DATA
+        RTS
+
+SHOWCUR:               ; ESC[?25h - przywroc kursor
+        LDA #$1B
+        STA ACIA_DATA
+        LDA #'['
+        STA ACIA_DATA
+        LDA #'?'
+        STA ACIA_DATA
+        LDA #'2'
+        STA ACIA_DATA
+        LDA #'5'
+        STA ACIA_DATA
+        LDA #'h'
+        STA ACIA_DATA
+        RTS
 
 PRDEC:                 ; A (0..99) dziesietnie, bez zera wiodacego
         LDX #$30

@@ -1,5 +1,6 @@
 #include <lcsim/gui.hpp>
 #include <lcsim/scope.hpp>
+#include <lcsim/fonts.hpp>
 #include <raylib.h>
 #include <algorithm>
 #include <cmath>
@@ -13,9 +14,18 @@ namespace lc  {
   namespace  {
     Font ui_font{};
     bool ui_font_loaded=false;
+    Texture2D terminal_font_texture{};
+    RenderTexture2D terminal_frame{};
+    Shader terminal_crt_shader{};
+    int terminal_crt_virt_pixel_loc=-1;
+    bool terminal_font_loaded=false;
+    bool terminal_frame_loaded=false;
+    bool terminal_crt_loaded=false;
+    constexpr int terminal_pixel_width=int(Terminal::columns)*8;
+    constexpr int terminal_pixel_height=int(Terminal::rows)*8;
     constexpr float ui_text_scale=2.f;
     const Color bg  {
-      15,20,27,255
+      27,27,26,255
     },panel  {
       27,35,46,255
     },line  {
@@ -338,21 +348,25 @@ namespace lc  {
   }
 
 void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status)  {
-  (void)scroll; // screen grid replaced scroll-back history
+  (void)scroll; // terminal has its own screen state; the framebuffer is rebuilt each frame
   auto devices=sim.terminals();
   if(devices.empty())  {
     text("No TERMINAL device in this design",area.x+16,area.y+20,16,muted);
     text("Build examples/cpu65c02-term.toml",area.x+16,area.y+62,12,muted);
     return;
   }
-  auto& name=devices.front().first;auto& terminal=*devices.front().second;
+
+  auto& name=devices.front().first;
+  auto& terminal=*devices.front().second;
   auto send=[&](const std::string& value)  {
     if(!sim.terminal_send(name,value))status="Keyboard queue full; paste not accepted";
     else status="Keyboard: "+std::to_string(terminal.keys.size())+" queued";
   };
+
   bool ctrl=IsKeyDown(KEY_LEFT_CONTROL)||IsKeyDown(KEY_RIGHT_CONTROL);
   if(button({area.x+8,area.y+4,100,36},"PASTE")||(ctrl&&IsKeyPressed(KEY_V)))  {
-    const char* clipboard=GetClipboardText();if(clipboard)send(clipboard);
+    const char* clipboard=GetClipboardText();
+    if(clipboard)send(clipboard);
   }
   if(button({area.x+116,area.y+4,100,36},"COPY"))SetClipboardText(terminal.transcript.c_str());
   if(button({area.x+224,area.y+4,100,36},"CLEAR"))terminal.clear();
@@ -366,54 +380,75 @@ void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status
   if(IsKeyPressed(KEY_BACKSPACE))send(std::string(1,char(8)));
   if(IsKeyPressed(KEY_ESCAPE))send(std::string(1,char(27)));
 
-  Rectangle screen{area.x+16,area.y+54,area.width-32,area.height-64};
-  constexpr int cols=int(Terminal::columns),trows=int(Terminal::rows);
-  DrawRectangleRec(screen,{8,14,12,255});
-  DrawRectangleLinesEx(screen,1,line);
-  Font font=ui_font_loaded?ui_font:GetFontDefault();
-  float cell_w=(screen.width-28)/cols,cell_h=(screen.height-20)/trows;
-  // measure "M" once at a reference size, derive size+pitch that always fit a cell
-  float ref=std::max(1.f,MeasureTextEx(font,"M",64.f,.5f).x);
-  float size=std::min(cell_h*.92f,cell_w*64.f/ref);   // real pixel size (text() halves it)
-  float pitch=ref*size/48.f;                          // ONE pitch: glyphs AND cursor
-  //float x0=screen.x+(screen.width-pitch*cols)/2;
-  float x0=screen.x+14;
-  //float pitch=cell_w;      // komórki wypełniają całą szerokość
-  float y0=screen.y+(screen.height-cell_h*trows)/2;
-  float yoff=(cell_h-size)*.45f;
-  Color phosphor=green;
-  auto draw_grid=[&](Color tint,float dx,float dy)  { // every glyph on the fixed grid
+  if(!terminal_frame_loaded||!terminal_font_loaded)return;
+
+  // Render the terminal at its native Apple font 40x24 / 8x8-pixel resolution.
+  // The CRT shader then turns this small framebuffer into the physical display.
+  BeginTextureMode(terminal_frame);
+  ClearBackground({0x32,0x29,0x1d,0xFF});
+
+  constexpr int cols=int(Terminal::columns);
+  constexpr int trows=int(Terminal::rows);
+  constexpr int glyph_scale=1;
+
+  Color phosphor= {0xe0,0x92, 0x37, 0xFF};//green;
+  auto draw_grid=[&](Color tint)  {
     for(int r=0;r<trows;r++)  {
       const std::string& row=terminal.screen[size_t(r)];
       for(int c=0;c<cols;c++)  {
-        char ch=row[size_t(c)];
-        if(ch==' ')continue;
-        text(std::string(1,ch),x0+c*pitch+dx,y0+r*cell_h+yoff+dy,size/2,tint);
+        unsigned char ch=static_cast<unsigned char>(row[size_t(c)]);
+        if(ch<' '||ch>127)continue;
+        Rectangle source{float(ch-' ')*8.f,0,8.f,8.f};
+        Rectangle dest{float(c*8),float(r*8),float(8*glyph_scale),float(8*glyph_scale)};
+        DrawTexturePro(terminal_font_texture,source,dest,{0,0},0,tint);
       }
     }
   };
-  draw_grid(phosphor,0,0);
-  if(terminal.crt)  {
-    BeginBlendMode(BLEND_ADDITIVE);
-    draw_grid({phosphor.r,phosphor.g,phosphor.b,36},0,0);
-    draw_grid({phosphor.r,phosphor.g,phosphor.b,20},1.5f,1.f);
-    EndBlendMode();
-  }
-  if(int(GetTime()*2.5)%2==0)  {                      // cursor on the SAME grid
-    float cx=x0+float(terminal.cursor_x)*pitch;
-    float cy=y0+float(terminal.cursor_y)*cell_h;
-    DrawRectangleRec({cx,cy,pitch,cell_h},phosphor);
-    char under=terminal.screen[terminal.cursor_y][terminal.cursor_x];
-    if(under!=' ')text(std::string(1,under),cx,cy+yoff,size/2,{8,14,12,255});
-  }
-  if(terminal.crt)  {
-    for(float sy=screen.y;sy<screen.y+screen.height-3;sy+=3)  { // soft scanlines
-      DrawRectangleRec({screen.x,sy,screen.width,1},{0,0,0,28});
-      DrawRectangleRec({screen.x,sy+1,screen.width,1},{0,0,0,85});
-      DrawRectangleRec({screen.x,sy+2,screen.width,1},{0,0,0,28});
+
+  draw_grid(phosphor);
+
+  // Cursor is part of the framebuffer, so CRT processing also affects it.
+  if(terminal.cursor_visible && int(GetTime()*2.5)%2==0)  {
+    int cx=std::clamp(int(terminal.cursor_x),0,cols-1)*8;
+    int cy=std::clamp(int(terminal.cursor_y),0,trows-1)*8;    
+    //int cx=std::clamp(terminal.cursor_x,0,cols-1)*8;
+    //int cy=std::clamp(terminal.cursor_y,0,trows-1)*8;
+    DrawRectangle(cx,cy,8,8,phosphor);
+    char under=terminal.screen[size_t(terminal.cursor_y)][size_t(terminal.cursor_x)];
+    unsigned char uch=static_cast<unsigned char>(under);
+    if(uch>=' '&&uch<=127)  {
+      Rectangle source{float(uch-' ')*8.f,0,8.f,8.f};
+      DrawTexturePro(terminal_font_texture,source,{float(cx),float(cy),8,8},{0,0},0,{8,14,12,255});
+
     }
   }
+
+  EndTextureMode();
+
+  Rectangle screen{area.x+16,area.y+54,area.width-32,area.height-64};
+  DrawRectangleRec(screen,{8,14,12,255});
+  DrawRectangleLinesEx(screen,1,line);
+
+  float scale=std::min(screen.width/float(terminal_pixel_width),
+                        screen.height/float(terminal_pixel_height));
+  float draw_w=terminal_pixel_width*scale;
+  float draw_h=terminal_pixel_height*scale;
+  Rectangle destination{
+    screen.x+(screen.width-draw_w)*.5f,
+    screen.y+(screen.height-draw_h)*.5f,
+    draw_w,draw_h
+  };
+  Rectangle source{0,0,float(terminal_frame.texture.width),-float(terminal_frame.texture.height)};
+
+  if(terminal.crt&&terminal_crt_loaded)  {
+   // SetShaderValue(terminal_crt_shader, GetShaderLocation(terminal_crt_shader, "virtPixelSize"), &scale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(terminal_crt_shader, terminal_crt_virt_pixel_loc, &scale, SHADER_UNIFORM_FLOAT);
+    BeginShaderMode(terminal_crt_shader);
+  }
+  DrawTexturePro(terminal_frame.texture,source,destination,{0,0},0,WHITE);
+  if(terminal.crt&&terminal_crt_loaded)EndShaderMode();
 }
+
   int gui(const Design& design,Profile profile,bool scope_first,bool cache)  {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1440,900,("LcSim - "+design.name).c_str());
@@ -428,6 +463,40 @@ void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status
       if(ui_font_loaded)SetTextureFilter(ui_font.texture,TEXTURE_FILTER_BILINEAR);
       break;
     }
+    //terminal font: the 96 glyphs are the 8x8 bitmap font
+    {
+      Image atlas=GenImageColor(96*8,8,BLANK);
+      for(int glyph=0;glyph<96;glyph++)  {
+        for(int row=0;row<8;row++)  {
+          unsigned char bits=apple_font[size_t(glyph)][size_t(row)];
+          for(int col=0;col<8;col++)  {
+            if(bits&(0x80u>>col))ImageDrawPixel(&atlas,glyph*8+(7 - col),row,WHITE);
+          }
+        }
+      }
+      terminal_font_texture=LoadTextureFromImage(atlas);
+      UnloadImage(atlas);
+      terminal_font_loaded=terminal_font_texture.id!=0;
+      if(terminal_font_loaded)SetTextureFilter(terminal_font_texture,TEXTURE_FILTER_POINT);
+    }
+
+    terminal_frame=LoadRenderTexture(terminal_pixel_width,terminal_pixel_height);
+    terminal_frame_loaded=terminal_frame.id!=0;
+    if(terminal_frame_loaded)SetTextureFilter(terminal_frame.texture,TEXTURE_FILTER_POINT);
+
+    const char* terminal_shader_paths[]={
+      "assets/shaders/terminal_crt.fs",
+      "../assets/shaders/terminal_crt.fs"
+    };
+    for(const auto* path:terminal_shader_paths)if(FileExists(path))  {
+      terminal_crt_shader=LoadShader(nullptr,path);
+      terminal_crt_loaded=terminal_crt_shader.id!=0;
+      if(terminal_crt_loaded)  {
+        terminal_crt_virt_pixel_loc=GetShaderLocation(terminal_crt_shader,"virtPixelSize");
+        break;
+      }
+    }
+
     auto sim=std::make_unique<Simulator>(design,profile,cache);
     sim->cache_enabled=cache;
     auto scope=std::make_unique<Scope>(*sim,design.scope);
@@ -626,6 +695,18 @@ void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status
       EndDrawing();
     }
     scope.reset();
+    if(terminal_crt_loaded)  {
+      UnloadShader(terminal_crt_shader);
+      terminal_crt_loaded=false;
+    }
+    if(terminal_frame_loaded)  {
+      UnloadRenderTexture(terminal_frame);
+      terminal_frame_loaded=false;
+    }
+    if(terminal_font_loaded)  {
+      UnloadTexture(terminal_font_texture);
+      terminal_font_loaded=false;
+    }  
     if(ui_font_loaded)  {
       UnloadFont(ui_font);
       ui_font_loaded=false;

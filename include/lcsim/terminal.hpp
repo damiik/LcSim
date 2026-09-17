@@ -25,9 +25,11 @@ public:
   uint8_t keyboard_control=0,display_control=0;
   size_t dropped=0;
   bool crt=true;                     // GUI: scanlines/glow/flicker toggle
+  bool cursor_visible=true;  
 private:
   int esc_state=0;
   std::string esc_params;
+  bool esc_private=false;            // remembers a leading '?' in CSI (e.g. ?25l)
   size_t saved_x=0,saved_y=0;
   bool last_nl=false;                    // absorbs CR,LF / LF,CR pairs
 public:
@@ -39,7 +41,7 @@ public:
       if(c=='\n'&&cr){cr=false;continue;}   // CRLF -> jedno LF
       cr=c=='\r';
       if(c=='\r')c='\n';                    // normalizacja: CR i LF -> LF (Linux)
-      if(c>='a'&&c<='z')c-=32;
+      // if(c>='a'&&c<='z')c-=32;           // normalizacja: małe litery -> duże (Apple-1/WozMon)
       if(c==8||c==127)c=acia?8:'_';
       if(c==8||c=='\n'||c==27||(c>=32&&c<127))encoded.push_back(acia?c:c|0x80);
     }
@@ -72,6 +74,8 @@ public:
     transcript.clear();
     cursor_x=cursor_y=0;
     esc_state=0;
+    esc_private=false;
+    cursor_visible=true;
     last_nl=false;
   }
 
@@ -107,7 +111,7 @@ private:
   void put_char(unsigned char c)  {
     if(esc_state==1)  {
       esc_state=0;
-      if(c=='['){esc_state=2;esc_params.clear();return;}
+      if(c=='['){esc_state=2; esc_params.clear(); esc_private=false; return;}
       if(c=='7'){saved_x=cursor_x;saved_y=cursor_y;return;}
       if(c=='8'){cursor_x=saved_x;cursor_y=saved_y;return;}
       if(c=='c'){clear();return;}
@@ -115,6 +119,7 @@ private:
     }
     if(esc_state==2)  {
       if((c>='0'&&c<='9')||c==';'){esc_params+=char(c);return;}
+      if(c=='?'){esc_private=true;return;}
       if(c==' '||c=='?'||c=='<'||c=='='||c=='>')return;
       esc_state=0;
       csi(char(c));
@@ -184,6 +189,9 @@ private:
       }
       case 's': saved_x=cursor_x;saved_y=cursor_y; break;
       case 'u': cursor_x=saved_x;cursor_y=saved_y; break;
+      case 'h': case 'l':
+        if(esc_private&&p[0]==25)cursor_visible=(final_byte=='h'); 
+        break;
       default: break;                        // m/h/l etc. ignored
     }
   }
