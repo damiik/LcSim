@@ -1,6 +1,6 @@
 
 1. Nowy lut w pliku toml należy uzupełnić o sekwencję butowania za pomocą skryptu python który dodaje na liniach PCH_OE_N stan niski w czasie butowania (active-low PCH_OE_N during boot):
-python3 tools/cpu65c02_image.py examples/cpu65c02.toml --control ../../nim/logic_cosmos_cpu_tools/control-lut.mem
+python3 tools/cpu65c02_image.py examples/cpu65c02-wozmon_v4.toml --control ../../nim/logic_cosmos_cpu_tools/control-lut.mem
 
 
 2. Kompilacja emlatora:
@@ -23,3 +23,6 @@ lub headless:
 
 4. kompilacja przykładowego programu z wyjściem dla WozMon (format blk):
 ../../nim/logic_cosmos_cpu_tools/lcct asm --isa mos6502-safe --format hex --listing eWoz.lst ./examples/eWoz.asm -o eWoz.mem
+
+5. kompilacja monitora eWoz do pamięci ROM (adres 0xF000) monitor ma dodatkowy *wozmon* w (adres 0xFF00), wynik należy wkleić do pamięci ROM w pliku z procesorem (toml):
+../../nim/logic_cosmos_cpu_tools/lcct asm --isa mos6502-safe --format hex ./examples/eWoz_optimized.asm -o wozmon.mem
