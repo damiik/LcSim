@@ -515,9 +515,6 @@ namespace lc  {
     if(dirty[gate])return;
     dirty[gate]=1;
     dirty_gates.push_back(gate);
-    for(int group:gate_groups[gate])  {
-      if(groups[group].dirty++==0)dirty_groups.push_back(group);
-    }
   }
   void Simulator::evaluate_group(int id,const std::vector<uint8_t>& work)  {
     auto& group=groups[id];
@@ -584,13 +581,16 @@ namespace lc  {
   }
   void Simulator::evaluate_dirty()  {
     if(dirty_gates.empty())return;
-    // Evaluation can schedule events, but it cannot resolve nets immediately.
-    // Keep this batch immutable until every affected hierarchy level has used it.
-    evaluate_group(root_group,dirty);
+    // Iterate dirty gates directly. Order doesn't matter here because
+    // every primitive reads from the same frozen net values — resolve()
+    // has already committed all pending driver changes before this batch.
+    // The group hierarchy was only useful for the (unused) module cache.
+    for(int g:dirty_gates)  {
+      if(pure(gates[g].e.type))evaluate_pure(g);
+      else evaluate_stateful(g);
+    }
     for(int gate:dirty_gates)dirty[gate]=0;
-    for(int group:dirty_groups)groups[group].dirty=0;
     dirty_gates.clear();
-    dirty_groups.clear();
   }
   void Simulator::advance(Time duration)  {
     if(duration<0)throw std::runtime_error("negative duration");
