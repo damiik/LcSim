@@ -503,6 +503,11 @@ void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status
     scope->configure(design.scope_config);
     enum class View { Panels, Scope, Term };
     View view=scope_first?View::Scope:View::Panels;
+    // Scope installs itself as sim->observe in its constructor. Save that
+    // handler and detach it while the scope view is hidden so resolve()
+    // does not pay the per-transition callback cost.
+    auto scope_observe=sim->observe;
+    sim->observe=view==View::Scope?scope_observe:nullptr;
     bool running=true,memory_tab=false;
     int terminal_scroll=0;
     int sidebar_scroll=0,memory_scroll=0,scope_scroll=0;
@@ -541,12 +546,15 @@ void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status
         sim->step();
       }
       auto reset=[&]()  {
+        sim->observe=nullptr;          // detach before destroying the owner
         scope.reset();
         sim=std::make_unique<Simulator>(design,profile,cache);
         sim->cache_enabled=cache;
         for(const auto& [name,words]:memory_overrides)sim->replace_memory(name,words);
         scope=std::make_unique<Scope>(*sim,design.scope);
         scope->configure(design.scope_config);
+        scope_observe=sim->observe;    // re-capture: lambda holds a fresh 'this'
+        sim->observe=view==View::Scope?scope_observe:nullptr;
         pan=0;
         accumulator=0;
       };
@@ -566,6 +574,7 @@ void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status
       if(button({750,22,95,40},"PANELS",view==View::Panels))select_view(View::Panels);
       if(button({853,22,95,40},"SCOPE",view==View::Scope))select_view(View::Scope);
       if(button({956,22,85,40},"TERM",view==View::Term))select_view(View::Term);
+      sim->observe=(view==View::Scope)?scope_observe:nullptr;
       bool show_scope=view==View::Scope;
       Rectangle slider  {
         1060,60,250,6

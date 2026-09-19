@@ -59,8 +59,11 @@ int main(int argc,char** argv)  {
     (void)scope;
 #endif
     lc::Simulator sim(design,profile,cache);
-    lc::Scope analyzer(sim,design.scope);
-    analyzer.configure(design.scope_config);
+    std::unique_ptr<lc::Scope> analyzer;
+    if(!vcd.empty()) {
+      analyzer=std::make_unique<lc::Scope>(sim,design.scope);
+      analyzer->configure(design.scope_config);
+    }
     for(const auto& [n,v]:inputs)sim.drive(n,v);
     if(!terminal_input.empty()) {
       auto terminals=sim.terminals();if(terminals.empty())throw std::runtime_error("design has no terminal");
@@ -84,7 +87,7 @@ int main(int argc,char** argv)  {
       file<<terminals.front().second->transcript;
     }
     if(dump)std::cout<<sim.diagnostics();
-    if(!vcd.empty())analyzer.export_vcd(vcd,analyzer.available_begin(),sim.now);
+    if(analyzer)analyzer->export_vcd(vcd,analyzer->available_begin(),sim.now);
     return 0;
   }
   catch(const std::exception& e)  {
