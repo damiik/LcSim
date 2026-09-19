@@ -14,8 +14,8 @@ namespace lc  {
     Logic binary(Logic x)  {
       return x==Logic::Z?Logic::X:x;
     }
-    bool pure(const std::string& t)  {
-      return t=="AND"||t=="OR"||t=="XOR"||t=="NAND"||t=="NOR"||t=="NOT"||t=="BUF"||t=="TBUF"||t=="OC"||t=="MUX2"||t=="MUX4"||t=="DMUX2"||t=="DMUX4";
+    constexpr bool pure(GateType t)  {
+      return t==GateType::AND||t==GateType::OR||t==GateType::XOR||t==GateType::NAND||t==GateType::NOR||t==GateType::NOT||t==GateType::BUF||t==GateType::TBUF||t==GateType::OC||t==GateType::MUX2||t==GateType::MUX4||t==GateType::DMUX2||t==GateType::DMUX4;
     }
     Time ps(double n)  {
       return static_cast<Time>(std::llround(n*1000));
@@ -54,7 +54,7 @@ namespace lc  {
     }
     );
     std::unordered_map<std::string,Net> named;
-    for(const auto& e:m.elements)if(e.type=="NODE"||e.type=="INOUT")  {
+    for(const auto& e:m.elements)if(e.type==GateType::NODE||e.type==GateType::INOUT)  {
       Net wire=map.at(e.out[0]);
       join(wire,map.at(e.in[0]));
       if(!e.name.empty())  {
@@ -67,11 +67,11 @@ namespace lc  {
       for(auto& n:e.in)n=map.at(n);
       for(auto& n:e.out)n=n?map.at(n):alloc();
       // disconnected outputs are separate sinks
-      if(e.type=="SWITCH")  {
+      if(e.type==GateType::SWITCH)  {
         join(e.in[0],e.out[1]);
         join(e.in[2],e.out[0]);
       }
-      std::string label=e.name.empty()?(e.module>=0?d.definitions[e.module].name:e.type)+"_"+std::to_string(ordinal):e.name;
+      std::string label=e.name.empty()?(e.module>=0?d.definitions[e.module].name:std::string(to_string(e.type)))+"_"+std::to_string(ordinal):e.name;
       std::string full=path.empty()?label:path+"/"+label;
       ordinal++;
       if(e.module>=0)  {
@@ -82,29 +82,29 @@ namespace lc  {
         groups[group].pure=groups[group].pure&&groups[child].pure;
         continue;
       }
-      if(top&&(e.type=="INPUT"||e.type=="OUTPUT"||e.type=="NODE"||e.type=="INOUT"||e.type=="DISPLAY"))  {
+      if(top&&(e.type==GateType::INPUT||e.type==GateType::OUTPUT||e.type==GateType::NODE||e.type==GateType::INOUT||e.type==GateType::DISPLAY))  {
         Probe p  {
-          label,e.type=="OUTPUT"||e.type=="DISPLAY"?e.in:e.out,  {},e,e.type=="INPUT"
+          label,e.type==GateType::OUTPUT||e.type==GateType::DISPLAY?e.in:e.out,  {},e,e.type==GateType::INPUT
         };
         views.push_back(p);
       }
-      if(e.type=="NODE"||e.type=="OUTPUT"||e.type=="INOUT"||e.type=="BUS"||e.type=="DISPLAY"||e.type=="OSCILLOSCOPE"||(e.type=="INPUT"&&!top))continue;
+      if(e.type==GateType::NODE||e.type==GateType::OUTPUT||e.type==GateType::INOUT||e.type==GateType::BUS||e.type==GateType::DISPLAY||e.type==GateType::OSCILLOSCOPE||(e.type==GateType::INPUT&&!top))continue;
       Gate gate;
       gate.e=e;
-      if(e.type=="SWITCH"){has_switches=true;gate.e.active_low=true;}
+      if(e.type==GateType::SWITCH){has_switches=true;gate.e.active_low=true;}
       gate.path=full;
       int id=static_cast<int>(gates.size());
       for(Net n:e.out)  {
         int di=static_cast<int>(drivers.size());
         drivers.push_back(  {
-          n,Logic::Z,Logic::Z,e.type=="PULLUP"||e.type=="PULLDOWN",false,0
+          n,Logic::Z,Logic::Z,e.type==GateType::PULLUP||e.type==GateType::PULLDOWN,false,0
         }
         );
         gate.drivers.push_back(di);
       }
-      if(top&&e.type=="INPUT")views.back().drivers=gate.drivers;
-      if(e.type=="TERMINAL")gate.terminal=std::make_unique<Terminal>(e.io_mode=="acia");
-      if(e.type=="ROM"||e.type=="RAM")gate.e.memory.resize(size_t(1)<<e.aw);
+      if(top&&e.type==GateType::INPUT)views.back().drivers=gate.drivers;
+      if(e.type==GateType::TERMINAL)gate.terminal=std::make_unique<Terminal>(e.io_mode=="acia");
+      if(e.type==GateType::ROM||e.type==GateType::RAM)gate.e.memory.resize(size_t(1)<<e.aw);
       gates.push_back(std::move(gate));
       groups[group].gates.push_back(id);
       groups[group].direct.push_back(id);
@@ -182,8 +182,8 @@ namespace lc  {
     for(size_t i=0; i<gates.size(); i++)  {
       auto& g=gates[i];
       auto t=g.e.type;
-      if(t=="INPUT"||t=="CLK"||t=="H"||t=="L"||t=="PULLUP"||t=="PULLDOWN")  {
-        Logic v=t=="INPUT"||t=="CLK"||t=="H"||t=="PULLUP"?Logic::H:Logic::L;
+      if(t==GateType::INPUT||t==GateType::CLK||t==GateType::H||t==GateType::L||t==GateType::PULLUP||t==GateType::PULLDOWN)  {
+        Logic v=t==GateType::INPUT||t==GateType::CLK||t==GateType::H||t==GateType::PULLUP?Logic::H:Logic::L;
         for(int dr:g.drivers)schedule(dr,v,0,drivers[dr].weak);
       }
     }
@@ -198,7 +198,7 @@ namespace lc  {
       auto& g=gates[i];
       g.data_changed=-1000000000;
       g.edge=-1000000000;
-      if(g.e.type=="CLK")enqueue(profile.tick*g.e.period,1,static_cast<int>(i));
+      if(g.e.type==GateType::CLK)enqueue(profile.tick*g.e.period,1,static_cast<int>(i));
     }
   }
   void Simulator::enqueue(Time at,int kind,int id,Logic v,uint64_t gen,bool weak)  {
@@ -210,7 +210,7 @@ namespace lc  {
   Time Simulator::delay(const Gate& g)const  {
     if(g.e.cycles>=0)return static_cast<Time>(std::llround(g.e.cycles*profile.tick));
     if(g.e.ns>=0)return ps(g.e.ns);
-    return g.e.type=="D_FF"?profile.cq:g.e.type=="SWITCH"?profile.sw:profile.gate;
+    return g.e.type==GateType::D_FF?profile.cq:g.e.type==GateType::SWITCH?profile.sw:profile.gate;
   }
   void Simulator::schedule(int id,Logic v,Time dt,bool weak)  {
     auto& d=drivers.at(id);
@@ -261,7 +261,7 @@ namespace lc  {
       }
       return n;
     };
-    for(const auto& g:gates)if(g.e.type=="SWITCH"&&g.switch_state==Logic::H)  {
+    for(const auto& g:gates)if(g.e.type==GateType::SWITCH&&g.switch_state==Logic::H)  {
       Net a=g.e.out[1],b=g.e.out[0];
       links[find(b)]=find(a);
       if(g.e.in[0])links[find(g.e.in[0])]=find(a);
@@ -280,7 +280,7 @@ namespace lc  {
       auto& a=acc[find(d.net)];
       merge(d.weak?a.weak:a.strong,d.value);
     }
-    for(const auto& g:gates)if(g.e.type=="SWITCH"&&g.switch_state==Logic::X)  {
+    for(const auto& g:gates)if(g.e.type==GateType::SWITCH&&g.switch_state==Logic::X)  {
       Net a=find(g.e.out[1]),b=find(g.e.out[0]);
       auto level=[&](Net n)  {
         return acc[n].strong==Logic::Z?acc[n].weak:acc[n].strong;
@@ -314,27 +314,27 @@ namespace lc  {
   std::vector<Logic> Simulator::evaluate_pure(const Gate& g)  {
     stats.evaluations++;
     auto v=inputs(g);
-    const auto& t=g.e.type;
-    if(t=="TBUF")  {
+    const auto t=g.e.type;
+    if(t==GateType::TBUF)  {
       Logic en=binary(v[1]);
       if(g.e.active_low)en=inv(en);
       return  {
         en==Logic::H?v[0]:Logic::Z
       };
     }
-    if(t=="OC")return  {
+    if(t==GateType::OC)return  {
       v[0]==Logic::H?Logic::L:Logic::Z
     };
     for(auto& x:v)x=binary(x);
-    if(t=="NOT")return  {
+    if(t==GateType::NOT)return  {
       inv(v[0])
     };
-    if(t=="BUF")return  {
+    if(t==GateType::BUF)return  {
       v[0]
     };
-    if(t.find("MUX")!=std::string::npos)  {
-      bool dem=t[0]=='D';
-      unsigned count=t.back()=='4'?4:2,offset=dem?1:count;
+    if(t==GateType::MUX2||t==GateType::MUX4||t==GateType::DMUX2||t==GateType::DMUX4)  {
+      bool dem=t==GateType::DMUX2||t==GateType::DMUX4;
+      unsigned count=(t==GateType::MUX4||t==GateType::DMUX4)?4:2,offset=dem?1:count;
       std::vector<Logic> out(dem?count:1,Logic::X);
       bool first=true;
       for(unsigned c=0; c<count; c++)  {
@@ -348,7 +348,7 @@ namespace lc  {
       }
       return out;
     }
-    bool andgate=t=="AND"||t=="NAND",orgate=t=="OR"||t=="NOR";
+    bool andgate=t==GateType::AND||t==GateType::NAND,orgate=t==GateType::OR||t==GateType::NOR;
     Logic r=andgate?Logic::H:Logic::L;
     for(Logic x:v)  {
       if(andgate)  {
@@ -370,20 +370,20 @@ namespace lc  {
         else if(x==Logic::H)r=inv(r);
       }
     }
-    if(t=="NAND"||t=="NOR")r=inv(r);
+    if(t==GateType::NAND||t==GateType::NOR)r=inv(r);
     return  {
       r
     };
   }
   void Simulator::apply(int id,const std::vector<Logic>& values)  {
     const auto& g=gates[id];
-    for(size_t p=0; p<values.size(); p++)schedule(g.drivers.at(p),values[p],delay(g),g.e.type=="TBUF"&&nets[g.e.in[0]].weak);
+    for(size_t p=0; p<values.size(); p++)schedule(g.drivers.at(p),values[p],delay(g),g.e.type==GateType::TBUF&&nets[g.e.in[0]].weak);
   }
   void Simulator::evaluate_stateful(int id)  {
     auto& g=gates[id];
-    const auto& t=g.e.type;
+    const auto t=g.e.type;
     auto v=inputs(g);
-    if(t=="SWITCH")  {
+    if(t==GateType::SWITCH)  {
       Logic en=binary(v[1]);
       if(g.e.active_low)en=inv(en);
       if(g.last_data!=en)  {
@@ -392,7 +392,7 @@ namespace lc  {
       }
       return;
     }
-    if(t=="D_LATCH")  {
+    if(t==GateType::D_LATCH)  {
       Logic en=binary(v[1]),data=binary(v[0]);
       if(v[0]!=Logic::Z)  {
         if(en==Logic::H)g.stored=data;
@@ -404,7 +404,7 @@ namespace lc  {
       );
       return;
     }
-    if(t=="D_FF")  {
+    if(t==GateType::D_FF)  {
       Logic clk=binary(v[0]),data=binary(v[1]);
       Time setup=g.e.setup>=0?ps(g.e.setup):profile.setup,hold=g.e.hold>=0?ps(g.e.hold):profile.hold;
       if(data!=g.last_data)  {
@@ -423,7 +423,7 @@ namespace lc  {
       );
       return;
     }
-    if(t=="TERMINAL") {
+    if(t==GateType::TERMINAL) {
       const auto a=address(v,0,16);
       const int reg=a>=int64_t(g.e.io_base)&&a<int64_t(g.e.io_base)+4?int(a-g.e.io_base):-1;
       const bool read=reg>=0&&v[24]==Logic::L&&v[25]==Logic::H;
@@ -452,10 +452,10 @@ namespace lc  {
         read?((g.terminal_read_value>>b)&1?Logic::H:Logic::L):Logic::Z,0);
       return;
     }
-    if(t=="RAM"||t=="ROM")  {
+    if(t==GateType::RAM||t==GateType::ROM)  {
       int64_t addr=address(v,0,g.e.aw);
       bool changed=false;
-      if(t=="RAM"&&v[g.e.aw+g.e.dw]==Logic::L)  {
+      if(t==GateType::RAM&&v[g.e.aw+g.e.dw]==Logic::L)  {
         bool valid=addr>=0;
         uint64_t word=0;
         for(size_t b=0; b<g.e.dw; b++)  {
@@ -475,7 +475,7 @@ namespace lc  {
         enqueue(now+ps(g.e.memory_ns),2,id,Logic::X,++g.read_generation);
       }
       else if(changed&&g.settled_address==addr&&addr>=0)g.read_word=g.e.memory[static_cast<size_t>(addr)];
-      size_t oe=t=="ROM"?g.e.aw:g.e.aw+g.e.dw+1;
+      size_t oe=t==GateType::ROM?g.e.aw:g.e.aw+g.e.dw+1;
       for(size_t b=0; b<g.drivers.size(); b++)  {
         Logic out=Logic::Z;
         if(v[oe]==Logic::L)out=!g.ready?Logic::Z:g.settled_address<0?Logic::X:(g.read_word>>b)&1?Logic::H:Logic::L;
@@ -656,20 +656,20 @@ namespace lc  {
   }
   std::vector<std::pair<std::string,std::vector<uint64_t>>> Simulator::memories()const  {
     std::vector<std::pair<std::string,std::vector<uint64_t>>> r;
-    for(const auto& g:gates)if(g.e.type=="RAM")r.emplace_back(g.path,g.e.memory);
+    for(const auto& g:gates)if(g.e.type==GateType::RAM)r.emplace_back(g.path,g.e.memory);
     return r;
   }
   std::vector<MemoryInfo> Simulator::memory_info()const  {
     std::vector<MemoryInfo> result;
-    for(const auto& g:gates)if(g.e.type=="RAM"||g.e.type=="ROM")result.push_back({g.path,g.e.type,g.e.aw,g.e.dw,g.e.memory.size()});
+    for(const auto& g:gates)if(g.e.type==GateType::RAM||g.e.type==GateType::ROM)result.push_back({g.path,to_string(g.e.type),g.e.aw,g.e.dw,g.e.memory.size()});
     return result;
   }
   std::vector<uint64_t> Simulator::memory_data(const std::string& name)const  {
-    for(const auto& g:gates)if((g.e.type=="RAM"||g.e.type=="ROM")&&g.path==name)return g.e.memory;
+    for(const auto& g:gates)if((g.e.type==GateType::RAM||g.e.type==GateType::ROM)&&g.path==name)return g.e.memory;
     throw std::runtime_error("unknown memory: "+name);
   }
   uint64_t Simulator::memory_word(const std::string& name,size_t address)const  {
-    for(const auto& g:gates)if((g.e.type=="RAM"||g.e.type=="ROM")&&g.path==name)  {
+    for(const auto& g:gates)if((g.e.type==GateType::RAM||g.e.type==GateType::ROM)&&g.path==name)  {
       if(address>=g.e.memory.size())throw std::runtime_error("memory address outside device depth");
       return g.e.memory[address];
     }
@@ -678,7 +678,7 @@ namespace lc  {
   void Simulator::replace_memory(const std::string& name,const std::vector<uint64_t>& values)  {
     for(size_t id=0;id<gates.size();id++)  {
       auto& g=gates[id];
-      if((g.e.type!="RAM"&&g.e.type!="ROM")||g.path!=name)continue;
+      if((g.e.type!=GateType::RAM&&g.e.type!=GateType::ROM)||g.path!=name)continue;
       if(values.size()>g.e.memory.size())throw std::runtime_error("memory image exceeds "+std::to_string(g.e.memory.size())+" words");
       uint64_t limit=g.e.dw==64?~uint64_t(0):(uint64_t(1)<<g.e.dw)-1;
       if(std::any_of(values.begin(),values.end(),[&](uint64_t value){return value>limit;}))throw std::runtime_error("memory word exceeds "+std::to_string(g.e.dw)+" bits");
@@ -705,7 +705,7 @@ namespace lc  {
   std::string Simulator::diagnostics()const  {
     std::ostringstream out;
     for(const auto& g:gates)  {
-      out<<g.path<<" "<<g.e.type<<" in=";
+      out<<g.path<<" "<<to_string(g.e.type)<<" in=";
       for(Net n:g.e.in)out<<digit(value(n));
       out<<" out=";
       for(int d:g.drivers)out<<digit(drivers[d].value);

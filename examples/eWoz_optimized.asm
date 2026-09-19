@@ -106,7 +106,7 @@ JSR COUT
 
 CMP #LF          ; WARIANT LF: Enter = $0A (bylo CR)
 BNE NOTCR
-JSR DBGBUF       ; opcjonalny zrzut bufora
+; JSR DBGBUF       ; opcjonalny zrzut bufora
 LDY #$FF         ; [POPRAWKA] Przygotowanie Y=-1, aby INY ponizej ustawilo Y=0
 LDA #$00
 TAX
@@ -116,16 +116,16 @@ BLSKIP: INY      ; Y staje sie 0
 
 
 ; --- DEBUG: pokaż Y i pierwszy czytany znak ---
-PHA
-TYA
-JSR PRBYTE
-LDA #' '
-JSR COUT
-LDA IN,Y
-JSR PRBYTE
-LDA #' '
-JSR COUT
-PLA
+; PHA
+; TYA
+; JSR PRBYTE
+; LDA #' '
+; JSR COUT
+; LDA IN,Y
+; JSR PRBYTE
+; LDA #' '
+; JSR COUT
+; PLA
 ; --- koniec debug ---
 
 
@@ -615,9 +615,11 @@ DBGBUF1:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Napisy
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-LOGMSG:	.byte $0d,$0a, "eWoz 1.43", CR, LF, NULL
+LOGMSG:	.byte $0d,$0a, "eWoz 1.5", CR, LF, NULL
 ISTMSG:	.byte $0d,$0a, "Start Intel Hex code Transfer.", CR, LF, NULL
 IOKMSG:	.byte $0d,$0a, "Intel Hex Imported OK.", CR, LF, NULL
 IERMSG:	.byte $0d,$0a, "Intel Hex Imported with checksum error.", CR, LF, NULL
-.org $FF00
-WOZMON: .byte $a9, $1f, $8d, $03, $50, $a9, $0b, $8d, $02, $50, $a9, $1b, $c9, $08, $f0, $13, $c9, $1b, $f0, $03, $c8, $10, $0f, $a9, $5c, $20, $ef, $ff, $a9, $0d, $20, $ef, $ff, $a0, $01, $88, $30, $f6, $ad, $01, $50, $29, $08, $f0, $f9, $ad, $00, $50, $99, $00, $02, $20, $ef, $ff, $c9, $0a, $d0, $d2, $a0, $ff, $a9, $00, $aa, $0a, $0a, $85, $2b, $c8, $b9, $00, $02, $c9, $0a, $f0, $d1, $c9, $2e, $90, $f4, $f0, $ee, $c9, $3a, $f0, $eb, $c9, $52, $f0, $3b, $86, $28, $86, $29, $84, $2a, $b9, $00, $02, $49, $30, $c9, $0a, $90, $06, $69, $88, $c9, $fa, $90, $11, $0a, $0a, $0a, $0a, $a2, $04, $0a, $26, $28, $26, $29, $ca, $d0, $f8, $c8, $d0, $e0, $c4, $2a, $f0, $94, $24, $2b, $50, $10, $a5, $28, $81, $26, $e6, $26, $d0, $b5, $e6, $27, $4c, $44, $ff, $6c, $24, $00, $30, $2b, $a2, $02, $b5, $27, $95, $25, $95, $23, $ca, $d0, $f7, $d0, $14, $a9, $0d, $20, $ef, $ff, $a5, $25, $20, $dc, $ff, $a5, $24, $20, $dc, $ff, $a9, $3a, $20, $ef, $ff, $a9, $20, $20, $ef, $ff, $a1, $24, $20, $dc, $ff, $86, $2b, $a5, $24, $c5, $28, $a5, $25, $e5, $29, $b0, $c1, $e6, $24, $d0, $02, $e6, $25, $a5, $24, $29, $07, $10, $c8, $48, $4a, $4a, $4a, $4a, $20, $e5, $ff, $68, $29, $0f, $09, $30, $c9, $3a, $90, $02, $69, $06, $48, $8d, $00, $50, $68, $60, $00, $00, $00, $00, $00, $00, $0f, $00, $ff, $00, $00
+.org $FFFA
+.word $0F00
+.word SETUP
+.word $0000

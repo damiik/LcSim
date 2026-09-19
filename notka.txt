@@ -24,5 +24,8 @@ lub headless:
 4. kompilacja przykładowego programu z wyjściem dla WozMon (format blk):
 ../../nim/logic_cosmos_cpu_tools/lcct asm --isa mos6502-safe --format hex --listing eWoz.lst ./examples/eWoz.asm -o eWoz.mem
 
-5. kompilacja monitora eWoz do pamięci ROM (adres 0xF000) monitor ma dodatkowy *wozmon* w (adres 0xFF00), wynik należy wkleić do pamięci ROM w pliku z procesorem (toml):
+5. kompilacja programu lunar_module do pamięci RAM (format ihex do wklejenia do eWoz):
+../../nim/logic_cosmos_cpu_tools/lcct asm --isa mos6502-safe --format ihex --listing lunar_module.lst ./examples/lunar_module.asm -o program.mem
+
+6. kompilacja monitora eWoz do pamięci ROM (adres 0xF000), wynik należy wkleić do pamięci ROM w pliku z procesorem (toml):
 ../../nim/logic_cosmos_cpu_tools/lcct asm --isa mos6502-safe --format hex ./examples/eWoz_optimized.asm -o wozmon.mem

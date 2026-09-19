@@ -1,6 +1,6 @@
 ; ============================================================
 ; LUNAR MODULE  -  symulator ladowania w stylu Apollo LM
-; 65C02 + ACIA (WozMon), ANSI 40x24
+; 65C02 + ACIA (WozMon/eWoz), ANSI 40x24
 ; Uruchomienie: 0500R
 ; Sterowanie: 0-9 = ciag silnika, Q = koniec
 ; ============================================================
@@ -27,6 +27,9 @@ FUEL_INIT  = 30
 SAFE_VEL   = 3
 LANDER_COL = 30
 GROUND_ROW = 23
+
+.org $0
+.byte $00
 
         .org $0500
 START:
@@ -63,7 +66,7 @@ POLLKEY:
         AND #$08
         BEQ PK_EXIT
         LDA ACIA_DATA
-        CMP #'Q'
+        CMP #'q'
         BEQ DOQUIT
         CMP #'0'
         BCC PK_EXIT
@@ -361,7 +364,7 @@ QUIT:
         JSR PRTXT
         JSR PARKCUR
         JSR SHOWCUR
-        JMP $FF00
+        JMP $F000
 
 ; ============================================================
 ; PROCEDURY TERMINALOWE (identyczne jak w labiryncie)
@@ -513,7 +516,7 @@ LBL_FUEL:   .byte "FUEL  ",0
 LBL_THR:    .byte "THR   ",0
 HELP1:      .byte "STEROWANIE:",0
 HELP2:      .byte "0-9  CIAG SILNIKA",0
-HELP3:      .byte "Q    KONIEC",0
+HELP3:      .byte "<q>  KONIEC",0
 ST_OK:      .byte "STATUS: LECI      ",0
 ST_NOFUEL:  .byte "STATUS: BRAK PAL. ",0
 ST_LAND:    .byte "LADOWANIE OK!     ",0

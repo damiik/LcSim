@@ -1,0 +1,158 @@
+format_version = 2
+
+[t_latch]
+n = "T_LATCH"
+d = "Moduł T_LATCH"
+inherit = ["t","x","y","cd","nnp"]
+inputs = [
+  {x = -340, y = -140, o = 1, n = "T"},
+  {y = -100, o = 2, n = "CLK"},
+]
+gates = [
+  {t = "NOT", i = 2, o = 3, x = -280, y = 40},
+  {i = 3, o = 4, x = -260},
+  {i = 4, o = 5, x = -240},
+  {t = "AND", i = [2,5], o = 6, x = -160, y = -20},
+  {i = [1,12], o = 7, x = -120, y = -80},
+  {i = [1,11], o = 8, y = 40},
+  {t = "NAND", i = [7,6], o = 9, x = -40, y = -80},
+  {i = [8,6], o = 10, y = 40},
+  {i = [12,9], o = 11, x = 40, y = -80},
+  {i = [10,11], o = 12, y = 40},
+]
+outputs = [
+  {x = 200, y = -120, n = "/Q", i = 11},
+  {y = 20, n = "Q", i = 12},
+]
+
+[d_latch]
+n = "D_LATCH"
+d = "Moduł D_LATCH"
+inherit = ["t","x","y","cd","nnp"]
+inputs = [
+  {x = 420, y = -400, o = 1, n = "D"},
+  {y = -340, o = 2, n = "CLK"},
+]
+gates = [
+  {t = "NAND", i = [1,2], o = 3, x = 580, y = -380, in = ["IN0","IN1"]},
+  {t = "NOT", i = 1, o = 4, x = 500, y = -300},
+  {t = "NAND", i = [3,6], o = 5, x = 660, y = -380},
+  {i = [5,7], o = 6, y = -300},
+  {i = [2,4], o = 7, x = 580, in = ["IN0","IN1"]},
+]
+outputs = [
+  {x = 720, y = -380, n = "Q", i = 5},
+  {y = -300, n = "/Q", i = 6},
+]
+
+[d_ff]
+n = "D_FF"
+d = "Moduł D_FF"
+inherit = ["t","x","y","cd","nnp"]
+inputs = [
+  {x = -400, o = 1, n = "CLK"},
+  {y = 100, o = 2, n = "D"},
+]
+gates = [
+  {t = "NOT", i = 12, o = 3, x = 120, y = 100},
+  {i = 1, o = 4, x = -360, y = 60},
+  {t = "TBUF", i = [17,1], o = 5, x = -220, y = 0},
+  {t = "PULLUP", o = 6, y = 40, x = 0},
+  {t = "TBUF", i = [2,4], o = 7, x = -220, y = 100},
+  {t = "NODE", i = [[7,5,14]], o = 8, x = -140, y = 80, n = "master"},
+  {i = 0, o = 9, x = -340, y = -100, n = "master"},
+  {t = "TBUF", i = [16,4], o = 10, x = -80, y = 0},
+  {i = [8,1], o = 11, y = 100},
+  {t = "NODE", i = [[11,10,6]], o = 12, y = 80, n = "slave", x = 0},
+  {i = 0, o = 13, x = -80, y = -80, n = "slave"},
+  {t = "PULLUP", o = 14, x = -140, y = 40},
+  {t = "TBUF", i = [18,13], o = 15, x = -60, y = -120},
+  {i = [18,[15,21]], o = 16, x = 40},
+  {i = [18,[19,20]], o = 17, x = -180},
+  {t = "L", o = 18, y = -180},
+  {t = "TBUF", i = [18,9], o = 19, x = -280, y = -120, cd = "Bufor 3-state działa jak\ntranzystor mosfet NMOS,\ntutaj działa jak inwerter"},
+  {t = "PULLUP", o = 20, y = -180, cd = ""},
+  {o = 21, x = -60},
+]
+outputs = [
+  {x = 200, y = 20, n = "Q", i = 12},
+  {y = 100, n = "/Q", i = 3},
+]
+
+[workspace]
+n = "Main Workspace"
+d = "Główny schemat roboczy"
+inherit = ["t","x","y","cd","nnp"]
+inputs = [
+]
+gates = [
+  {t = "CLK", o = 1, x = -420, y = -580, p = 8, n = "8"},
+  {t = "NODE", i = 0, o = 2, x = 100, y = -560, n = "DATA.D0"},
+  {i = 0, o = 3, y = -520, n = "DATA.D1"},
+  {i = 0, o = 4, y = -480, n = "DATA.D2"},
+  {i = 0, o = 5, y = -440, n = "DATA.D3"},
+  {t = "ROM", i = [2,3,4,5,81], o = [6,7,8,9,10,11,12,13,14,15,16,17,18], x = 220, y = -460, dw = 13, m = "0x1f7 0x18a4 0x5d 0x0ed 0x15ae 0x06b 0x17b 0x14a5 0x7f 0xef 0x13bf 0x57a 0x1953 0x08fc 0x1f5b 0x0f1b"},
+  {t = "BUS", x = 40, y = -600, n = "DATA", bm = ["DATA.D0","DATA.D1","DATA.D2","DATA.D3"]},
+  {t = "NODE", i = 24, o = 19, x = -260, y = -560, n = "DATA.D0", nnp = "AFTER"},
+  {i = 26, o = 20, y = -460, n = "DATA.D1"},
+  {i = 28, o = 21, y = -360, n = "DATA.D2"},
+  {i = 30, o = 22, y = -260, n = "DATA.D3"},
+  {i = 25, o = 23, y = -520, n = "p1", nnp = "CENTER"},
+  {t = "DFF", i = [1,35], o = [24,25], x = -320, y = -540},
+  {i = [35,36], o = [26,27], y = -440},
+  {i = [36,37], o = [28,29], y = -340},
+  {i = [37,38], o = [30,31], y = -240},
+  {t = "NODE", i = 27, o = 32, x = -260, y = -420, n = "p2"},
+  {i = 29, o = 33, y = -320, n = "p3"},
+  {i = 31, o = 34, y = -220, n = "p4"},
+  {i = 0, o = 35, x = -400, y = -480, n = "p1"},
+  {i = 0, o = 36, y = -400, n = "p2"},
+  {i = 0, o = 37, y = -300, n = "p3"},
+  {i = 0, o = 38, y = -220, n = "p4"},
+  {i = 6, o = 39, x = 320, y = -520, n = "DSP.D0"},
+  {i = 7, o = 40, y = -500, n = "DSP.D1"},
+  {i = 8, o = 41, y = -480, n = "DSP.D2"},
+  {i = 9, o = 42, y = -460, n = "DSP.D3"},
+  {i = 10, o = 43, y = -420, n = "DSP.D4"},
+  {i = 11, o = 44, y = -400, n = "DSP.D5"},
+  {i = 12, o = 45, y = -380, n = "DSP.D6"},
+  {i = 13, o = 46, y = -360, n = "DSP.D7"},
+  {i = 14, o = 47, y = -320, n = "DSP.D8"},
+  {i = 0, o = 48, x = 620, y = -760, n = "DSP.D0", nsh = "square", non = "#b4f191", nof = "#545454", nbo = "#595959", nsn = false},
+  {i = 0, o = 49, x = 600, y = -740, n = "DSP.D1", nsh = "square", non = "#b4f191", nof = "#454545", nbo = "#474747", nsn = false},
+  {i = 0, o = 50, x = 660, n = "DSP.D2", nsh = "square", non = "#b4f191", nof = "#545454", nbo = "#575757", nsn = false},
+  {i = 0, o = 51, x = 620, y = -700, n = "DSP.D3", nsh = "square", non = "#b4f191", nof = "#545454", nbo = "#575757", nsn = false},
+  {i = 0, o = 52, x = 600, y = -680, n = "DSP.D4", nsh = "square", non = "#b4f191", nof = "#545454", nbo = "#4f4f4f", nsn = false},
+  {i = 0, o = 53, x = 660, n = "DSP.D5", nsh = "square", non = "#b4f191", nof = "#545454", nbo = "#4f4f4f", nsn = false},
+  {i = 0, o = 54, x = 620, y = -640, n = "DSP.D6", nsh = "square", non = "#b4f191", nof = "#404040", nbo = "#454545", nsn = false},
+  {i = 0, o = 55, x = 660, y = -700, n = "DSP.D7", nsh = "square", non = "#b4f191", nof = "#585656", nbo = "#545454", nsn = false},
+  {i = 0, o = 56, x = 600, n = "DSP.D8", nsh = "square", non = "#b4f191", nof = "#4f4f4f", nbo = "#474747", nsn = false},
+  {i = 0, o = 57, x = 640, y = -760, n = "DSP.D0", nsh = "square", non = "#b4f191", nof = "#525252", nbo = "#4f4f4f", nsn = false},
+  {i = 0, o = 58, x = 600, y = -720, n = "DSP.D1", nsh = "square", non = "#b4f191", nof = "#4f4f4f", nbo = "#3d3d3d", nsn = false},
+  {i = 0, o = 59, x = 660, n = "DSP.D2", nsh = "square", non = "#b4f191", nof = "#525252", nbo = "#545454", nsn = false},
+  {i = 0, o = 60, x = 640, y = -700, n = "DSP.D3", nsh = "square", non = "#b4f191", nof = "#4d4d4d", nbo = "#4f4f4f", nsn = false},
+  {i = 0, o = 61, x = 600, y = -660, n = "DSP.D4", nsh = "square", non = "#b4f191", nof = "#474747", nbo = "#525252", nsn = false},
+  {i = 0, o = 62, x = 660, n = "DSP.D5", nsh = "square", non = "#b4f191", nof = "#4d4d4d", nbo = "#545454", nsn = false},
+  {i = 0, o = 63, x = 640, y = -640, n = "DSP.D6", nsh = "square", non = "#b4f191", nof = "#454545", nbo = "#3d3d3d", nsn = false},
+  {i = 0, o = 64, x = 600, n = "DSP.D9", nsh = "square", non = "#b4f191", nof = "#454545", nbo = "#454545", nsn = false},
+  {i = 15, o = 65, x = 320, y = -300, n = "DSP.D9"},
+  {i = 16, o = 66, y = -280, n = "DSP.D10"},
+  {i = 0, o = 67, x = 600, y = -760, n = "DSP.D10", nsh = "square", non = "#b4f191", nof = "#474747", nbo = "#424242", nsn = false},
+  {i = 0, o = 68, x = 660, n = "DSP.D11", nsh = "square", non = "#b4f191", nof = "#4a4a4a", nbo = "#4f4f4f", nsn = false},
+  {i = 0, o = 69, y = -640, n = "DSP.D12", nsh = "square", non = "#b4f191", nof = "#454545", nbo = "#474747", nsn = false},
+  {i = 17, o = 70, x = 320, y = -260, n = "DSP.D11"},
+  {i = 18, o = 71, y = -220, n = "DSP.D12"},
+  {i = 81, o = 72, x = 160, y = -300, n = "L"},
+  {i = 0, o = 73, x = 640, y = -720, n = "L", nsh = "square", non = "#ffe5e5", nof = "#474747", nbo = "#424242", nsn = false},
+  {i = 0, o = 74, x = 620, n = "L", nsh = "square", non = "#ffe5e5", nof = "#474747", nbo = "#424242", nsn = false},
+  {i = 0, o = 75, x = 640, y = -740, n = "L", nsh = "square", non = "#ffe5e5", nof = "#474747", nbo = "#424242", nsn = false},
+  {i = 0, o = 76, x = 620, n = "L", nsh = "square", non = "#ffe5e5", nof = "#474747", nbo = "#424242", nsn = false},
+  {i = 0, o = 77, x = 640, y = -680, n = "L", nsh = "square", non = "#ffe5e5", nof = "#474747", nbo = "#424242", nsn = false},
+  {i = 0, o = 78, x = 620, n = "L", nsh = "square", non = "#ffe5e5", nof = "#474747", nbo = "#424242", nsn = false},
+  {i = 0, o = 79, x = 640, y = -660, n = "L", nsh = "square", non = "#ffe5e5", nof = "#474747", nbo = "#424242", nsn = false},
+  {i = 0, o = 80, x = 620, n = "L", nsh = "square", non = "#ffe5e5", nof = "#474747", nbo = "#424242", nsn = false},
+  {t = "L", o = 81, x = 80, y = -380},
+]
+outputs = [
+]
+

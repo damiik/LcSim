@@ -149,7 +149,7 @@ namespace lc  {
       return out.str();
     }
     bool scope_probe(const Probe& p)  {
-      return !p.visual.pixel&&(p.visual.type=="NODE"||p.visual.type=="INPUT"||p.visual.type=="INOUT"||p.visual.type=="BUS");
+      return !p.visual.pixel&&(p.visual.type==GateType::NODE||p.visual.type==GateType::INPUT||p.visual.type==GateType::INOUT||p.visual.type==GateType::BUS);
     }
     void draw_scope_probe_list(Scope& scope,const Simulator& sim,Rectangle side,int& scroll)  {
       const auto mouse=GetMousePosition();
@@ -656,7 +656,7 @@ void draw_terminal(Simulator& sim,Rectangle area,int& scroll,std::string& status
         }
         std::vector<const Probe*> outputs;
         double minx=1e30,maxx=-1e30,miny=1e30,maxy=-1e30;
-        for(const auto& p:sim->probes())if(p.visual.pixel||p.visual.type=="OUTPUT"||p.visual.type=="DISPLAY")  {
+        for(const auto& p:sim->probes())if(p.visual.pixel||p.visual.type==GateType::OUTPUT||p.visual.type==GateType::DISPLAY)  {
           outputs.push_back(&p);
           minx=std::min(minx,p.visual.x);
           maxx=std::max(maxx,p.visual.x);

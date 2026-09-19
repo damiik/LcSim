@@ -530,4 +530,4 @@ BYEMSG:  .byte "DO WIDZENIA - RESET = 0500R",0
 ; ============================================================
 TROW:   .byte 3,3,5,7,8,10,10,12,13,14       ; wiersze 10 skarbow
 TCOL:   .byte 5,32,18,7,32,12,25,5,22,32     ; kolumny 10 skarbow
-TALIVE: .ds 10                               ; wymagają zainitializowania na 1 w INITTR 
+TALIVE: .byte 10, 10, 10, 10, 10, 10, 10, 10, 10, 10
