@@ -20,7 +20,14 @@ namespace lc  {
     Time ps(double n)  {
       return static_cast<Time>(std::llround(n*1000));
     }
-    int64_t address(const std::vector<Logic>& v,size_t offset,size_t width)  {
+    // Max inputs across every primitive:
+    //   TERMINAL = 26, RAM(aw=20,dw=64) = 86. 88 is a safe ceiling.
+    // flatten() rejects anything larger so the hot-path stack buffers below
+    // never need a bounds check.
+    constexpr size_t MAX_GATE_INPUTS = 88;
+    // Max outputs: DMUX4 = 4, TERMINAL = 8. 8 is a safe ceiling for the
+    // pure combinational path; stateful path iterates g.drivers directly.
+    int64_t address(const Logic* v,size_t offset,size_t width)  {
       uint64_t result=0;
       for(size_t b=0; b<width; b++)  {
         if(v[offset+b]!=Logic::L&&v[offset+b]!=Logic::H)return -1;
@@ -105,6 +112,8 @@ namespace lc  {
       if(top&&e.type==GateType::INPUT)views.back().drivers=gate.drivers;
       if(e.type==GateType::TERMINAL)gate.terminal=std::make_unique<Terminal>(e.io_mode=="acia");
       if(e.type==GateType::ROM||e.type==GateType::RAM)gate.e.memory.resize(size_t(1)<<e.aw);
+      if(gate.e.in.size()>MAX_GATE_INPUTS)
+        throw std::runtime_error("gate has too many inputs ("+std::to_string(gate.e.in.size())+"): "+full);
       gates.push_back(std::move(gate));
       groups[group].gates.push_back(id);
       groups[group].direct.push_back(id);
@@ -213,7 +222,7 @@ namespace lc  {
     return g.e.type==GateType::D_FF?profile.cq:g.e.type==GateType::SWITCH?profile.sw:profile.gate;
   }
   void Simulator::schedule(int id,Logic v,Time dt,bool weak)  {
-    auto& d=drivers.at(id);
+    auto& d=drivers[id];
     if(d.pending&&d.target==v&&d.target_weak==weak)return;
     if(!d.pending&&d.value==v&&d.weak==weak)return;
     d.generation++;
@@ -305,90 +314,107 @@ namespace lc  {
       }
     }
   }
-  std::vector<Logic> Simulator::inputs(const Gate& g)const  {
-    std::vector<Logic> v;
-    v.reserve(g.e.in.size());
-    for(Net n:g.e.in)v.push_back(value(n));
-    return v;
-  }
-  std::vector<Logic> Simulator::evaluate_pure(const Gate& g)  {
+  // evaluate_pure -- stack-buffer, no std::vector, no apply().
+  //
+  // Every primitive that reaches here has been validated by flatten() to
+  // have <= MAX_GATE_INPUTS pins, so v[] never overflows. Outputs are
+  // written to out[] and scheduled directly; nout is 1 for most gates,
+  // 4 for DMUX4, and 4 for the DMUX family in general.
+  void Simulator::evaluate_pure(int id)  {
+    auto& g=gates[id];
     stats.evaluations++;
-    auto v=inputs(g);
     const auto t=g.e.type;
+    Logic v[MAX_GATE_INPUTS];
+    const uint32_t nin=static_cast<uint32_t>(g.e.in.size());
+    for(uint32_t i=0;i<nin;i++)v[i]=value(g.e.in[i]);
+
+    Logic out[4];
+    uint32_t nout=1;
+
     if(t==GateType::TBUF)  {
       Logic en=binary(v[1]);
       if(g.e.active_low)en=inv(en);
-      return  {
-        en==Logic::H?v[0]:Logic::Z
-      };
+      out[0]=en==Logic::H?v[0]:Logic::Z;
     }
-    if(t==GateType::OC)return  {
-      v[0]==Logic::H?Logic::L:Logic::Z
-    };
-    for(auto& x:v)x=binary(x);
-    if(t==GateType::NOT)return  {
-      inv(v[0])
-    };
-    if(t==GateType::BUF)return  {
-      v[0]
-    };
-    if(t==GateType::MUX2||t==GateType::MUX4||t==GateType::DMUX2||t==GateType::DMUX4)  {
-      bool dem=t==GateType::DMUX2||t==GateType::DMUX4;
-      unsigned count=(t==GateType::MUX4||t==GateType::DMUX4)?4:2,offset=dem?1:count;
-      std::vector<Logic> out(dem?count:1,Logic::X);
-      bool first=true;
-      for(unsigned c=0; c<count; c++)  {
-        if(v[offset]!=Logic::X&&static_cast<unsigned>(v[offset])!=(c&1))continue;
-        if(count==4&&v[offset+1]!=Logic::X&&static_cast<unsigned>(v[offset+1])!=(c>>1))continue;
-        for(size_t p=0; p<out.size(); p++)  {
-          Logic x=dem?(p==c?v[0]:Logic::L):v[c];
-          out[p]=first||out[p]==x?x:Logic::X;
-        }
-        first=false;
-      }
-      return out;
+    else if(t==GateType::OC)  {
+      out[0]=v[0]==Logic::H?Logic::L:Logic::Z;
     }
-    bool andgate=t==GateType::AND||t==GateType::NAND,orgate=t==GateType::OR||t==GateType::NOR;
-    Logic r=andgate?Logic::H:Logic::L;
-    for(Logic x:v)  {
-      if(andgate)  {
-        if(x==Logic::L)  {
-          r=Logic::L;
-          break;
-        }
-        if(x==Logic::X)r=Logic::X;
+    else  {
+      for(uint32_t i=0;i<nin;i++)v[i]=binary(v[i]);
+      if(t==GateType::NOT)  {
+        out[0]=inv(v[0]);
       }
-      else if(orgate)  {
-        if(x==Logic::H)  {
-          r=Logic::H;
-          break;
+      else if(t==GateType::BUF)  {
+        out[0]=v[0];
+      }
+      else if(t==GateType::MUX2||t==GateType::MUX4||t==GateType::DMUX2||t==GateType::DMUX4)  {
+        const bool dem=t==GateType::DMUX2||t==GateType::DMUX4;
+        const unsigned count=(t==GateType::MUX4||t==GateType::DMUX4)?4u:2u;
+        const unsigned offset=dem?1u:count;
+        nout=dem?count:1u;
+        for(uint32_t p=0;p<nout;p++)out[p]=Logic::X;
+        bool first=true;
+        for(unsigned c=0;c<count;c++)  {
+          if(v[offset]!=Logic::X&&static_cast<unsigned>(v[offset])!=(c&1u))continue;
+          if(count==4&&v[offset+1]!=Logic::X&&static_cast<unsigned>(v[offset+1])!=(c>>1u))continue;
+          for(uint32_t p=0;p<nout;p++)  {
+            Logic x=dem?(p==c?v[0]:Logic::L):v[c];
+            out[p]=(first||out[p]==x)?x:Logic::X;
+          }
+          first=false;
         }
-        if(x==Logic::X)r=Logic::X;
       }
       else  {
-        if(x==Logic::X||r==Logic::X)r=Logic::X;
-        else if(x==Logic::H)r=inv(r);
+        const bool andgate=t==GateType::AND||t==GateType::NAND;
+        const bool orgate=t==GateType::OR||t==GateType::NOR;
+        Logic r=andgate?Logic::H:Logic::L;
+        for(uint32_t i=0;i<nin;i++)  {
+          Logic x=v[i];
+          if(andgate)  {
+            if(x==Logic::L)  {
+              r=Logic::L;
+              break;
+            }
+            if(x==Logic::X)r=Logic::X;
+          }
+          else if(orgate)  {
+            if(x==Logic::H)  {
+              r=Logic::H;
+              break;
+            }
+            if(x==Logic::X)r=Logic::X;
+          }
+          else  {
+            if(x==Logic::X||r==Logic::X)r=Logic::X;
+            else if(x==Logic::H)r=inv(r);
+          }
+        }
+        if(t==GateType::NAND||t==GateType::NOR)r=inv(r);
+        out[0]=r;
       }
     }
-    if(t==GateType::NAND||t==GateType::NOR)r=inv(r);
-    return  {
-      r
-    };
+
+    const Time dt=delay(g);
+    const bool weak_out=(t==GateType::TBUF)&&nets[g.e.in[0]].weak;
+    for(uint32_t p=0;p<nout;p++)schedule(g.drivers[p],out[p],dt,weak_out);
   }
-  void Simulator::apply(int id,const std::vector<Logic>& values)  {
-    const auto& g=gates[id];
-    for(size_t p=0; p<values.size(); p++)schedule(g.drivers.at(p),values[p],delay(g),g.e.type==GateType::TBUF&&nets[g.e.in[0]].weak);
-  }
+  // evaluate_stateful -- stack-buffer, no std::vector, no apply().
+  //
+  // MAX_GATE_INPUTS covers RAM(aw=20,dw=64) = 86 and TERMINAL = 26.
   void Simulator::evaluate_stateful(int id)  {
     auto& g=gates[id];
     const auto t=g.e.type;
-    auto v=inputs(g);
+    Logic v[MAX_GATE_INPUTS];
+    const uint32_t nin=static_cast<uint32_t>(g.e.in.size());
+    for(uint32_t i=0;i<nin;i++)v[i]=value(g.e.in[i]);
+    const Time dt=delay(g);
+
     if(t==GateType::SWITCH)  {
       Logic en=binary(v[1]);
       if(g.e.active_low)en=inv(en);
       if(g.last_data!=en)  {
         g.last_data=en;
-        enqueue(now+delay(g),3,id,en,++g.read_generation);
+        enqueue(now+dt,3,id,en,++g.read_generation);
       }
       return;
     }
@@ -398,15 +424,15 @@ namespace lc  {
         if(en==Logic::H)g.stored=data;
         else if(en==Logic::X&&data!=g.stored)g.stored=Logic::X;
       }
-      apply(id,  {
-        g.stored,inv(g.stored)
-      }
-      );
+      Logic q=g.stored,nq=inv(g.stored);
+      schedule(g.drivers[0],q,dt,false);
+      schedule(g.drivers[1],nq,dt,false);
       return;
     }
     if(t==GateType::D_FF)  {
       Logic clk=binary(v[0]),data=binary(v[1]);
-      Time setup=g.e.setup>=0?ps(g.e.setup):profile.setup,hold=g.e.hold>=0?ps(g.e.hold):profile.hold;
+      Time setup=g.e.setup>=0?ps(g.e.setup):profile.setup;
+      Time hold=g.e.hold>=0?ps(g.e.hold):profile.hold;
       if(data!=g.last_data)  {
         g.data_changed=now;
         if(g.edge>=0&&now-g.edge<hold)g.stored=Logic::X;
@@ -417,39 +443,40 @@ namespace lc  {
         g.stored=now-g.data_changed<setup?Logic::X:data;
       }
       g.last_clock=clk;
-      apply(id,  {
-        g.stored,inv(g.stored)
-      }
-      );
+      Logic q=g.stored,nq=inv(g.stored);
+      schedule(g.drivers[0],q,dt,false);
+      schedule(g.drivers[1],nq,dt,false);
       return;
     }
-    if(t==GateType::TERMINAL) {
+    if(t==GateType::TERMINAL)  {
       const auto a=address(v,0,16);
       const int reg=a>=int64_t(g.e.io_base)&&a<int64_t(g.e.io_base)+4?int(a-g.e.io_base):-1;
       const bool read=reg>=0&&v[24]==Logic::L&&v[25]==Logic::H;
       const bool write=reg>=0&&v[25]==Logic::L&&v[24]==Logic::H;
-      if(g.terminal_read&&(!read||reg!=g.terminal_reg)) {
+      if(g.terminal_read&&(!read||reg!=g.terminal_reg))  {
         if(g.terminal_key_latched)g.terminal->consume();
         g.terminal_read=false;
       }
-      if(read&&!g.terminal_read) {
+      if(read&&!g.terminal_read)  {
         g.terminal_read=true;g.terminal_reg=reg;
         g.terminal_read_value=g.terminal->read(unsigned(reg));
         g.terminal_key_latched=reg==0&&!g.terminal->keys.empty();
       }
       // Commit once on a clean /WR rising edge. Address/data may settle while low.
-      if(g.terminal_write&&!write) {
+      if(g.terminal_write&&!write)  {
         if(v[25]==Logic::H&&reg==g.terminal_write_reg&&g.terminal_write_valid)
           g.terminal->write(unsigned(g.terminal_write_reg),g.terminal_write_value);
         g.terminal_write=false;
       }
-      if(write) {
+      if(write)  {
         const auto data=address(v,16,8);
         g.terminal_write=true;g.terminal_write_reg=reg;
         g.terminal_write_valid=data>=0;g.terminal_write_value=uint8_t(data<0?0:data);
       }
-      for(size_t b=0;b<g.drivers.size();b++)schedule(g.drivers[b],
-        read?((g.terminal_read_value>>b)&1?Logic::H:Logic::L):Logic::Z,0);
+      const bool driving=read;
+      const uint8_t rv=g.terminal_read_value;
+      for(size_t b=0;b<g.drivers.size();b++)
+        schedule(g.drivers[b],driving?((rv>>b)&1?Logic::H:Logic::L):Logic::Z,0);
       return;
     }
     if(t==GateType::RAM||t==GateType::ROM)  {
@@ -458,7 +485,7 @@ namespace lc  {
       if(t==GateType::RAM&&v[g.e.aw+g.e.dw]==Logic::L)  {
         bool valid=addr>=0;
         uint64_t word=0;
-        for(size_t b=0; b<g.e.dw; b++)  {
+        for(size_t b=0;b<g.e.dw;b++)  {
           Logic x=v[g.e.aw+b];
           if(x!=Logic::L&&x!=Logic::H)valid=false;
           if(x==Logic::H)word|=uint64_t(1)<<b;
@@ -475,8 +502,8 @@ namespace lc  {
         enqueue(now+ps(g.e.memory_ns),2,id,Logic::X,++g.read_generation);
       }
       else if(changed&&g.settled_address==addr&&addr>=0)g.read_word=g.e.memory[static_cast<size_t>(addr)];
-      size_t oe=t==GateType::ROM?g.e.aw:g.e.aw+g.e.dw+1;
-      for(size_t b=0; b<g.drivers.size(); b++)  {
+      const size_t oe=t==GateType::ROM?g.e.aw:g.e.aw+g.e.dw+1;
+      for(size_t b=0;b<g.drivers.size();b++)  {
         Logic out=Logic::Z;
         if(v[oe]==Logic::L)out=!g.ready?Logic::Z:g.settled_address<0?Logic::X:(g.read_word>>b)&1?Logic::H:Logic::L;
         else if(v[oe]!=Logic::H)out=Logic::X;
@@ -516,7 +543,13 @@ namespace lc  {
       auto it=cache.find(key);
       if(it!=cache.end())  {
         stats.hits++;
-        for(const auto& r:it->second)apply(group.gates[r.index],r.values);
+        for(const auto& r:it->second)  {
+          const int gid=group.gates[r.index];
+          const auto& gate=gates[gid];
+          const Time dt=delay(gate);
+          const bool weak_out=(gate.e.type==GateType::TBUF)&&nets[gate.e.in[0]].weak;
+          for(size_t p=0;p<r.values.size();p++)schedule(gate.drivers[p],r.values[p],dt,weak_out);
+        }
         return;
       }
       stats.misses++;
@@ -524,7 +557,7 @@ namespace lc  {
       for(int child:group.children)  {
         evaluate_group(child,work);
       }
-      for(int g:group.direct)if(work[g])apply(g,evaluate_pure(gates[g]));
+      for(int g:group.direct)if(work[g])evaluate_pure(g);
       std::vector<Result> plan;
       size_t bytes=key.size()+128;
       for(int k:active)  {
@@ -545,7 +578,7 @@ namespace lc  {
       evaluate_group(child,work);
     }
     for(int g:group.direct)if(work[g])  {
-      if(pure(gates[g].e.type))apply(g,evaluate_pure(gates[g]));
+      if(pure(gates[g].e.type))evaluate_pure(g);
       else evaluate_stateful(g);
     }
   }
@@ -633,9 +666,13 @@ namespace lc  {
     for(size_t b=0; b<p->drivers.size(); b++)schedule(p->drivers[b],logic(bits[bits.size()-1-b]),0);
     advance(0);
   }
+  // bits() -- append then reverse. Previously s.insert(s.begin(), ...)
+  // was O(n^2) for n nets.
   std::string Simulator::bits(const Probe& p)const  {
     std::string s;
-    for(Net n:p.nets)s.insert(s.begin(),digit(value(n)));
+    s.reserve(p.nets.size());
+    for(Net n:p.nets)s+=digit(value(n));
+    std::reverse(s.begin(),s.end());
     return s;
   }
   std::string Simulator::hex(const Probe& p)const  {

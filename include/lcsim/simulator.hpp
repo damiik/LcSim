@@ -146,12 +146,10 @@ namespace lc  {
     void mark_dirty(int);
     void evaluate_dirty();
     void evaluate_group(int,const std::vector<uint8_t>&);
-    std::vector<Logic> evaluate_pure(const Gate&);
+    void evaluate_pure(int);
     void evaluate_stateful(int);
-    void apply(int,const std::vector<Logic>&);
     void schedule(int,Logic,Time,bool weak=false);
     Time delay(const Gate&) const;
     void enqueue(Time,int,int,Logic=Logic::X,uint64_t=0,bool weak=false);
-    std::vector<Logic> inputs(const Gate&) const;
   };
 }

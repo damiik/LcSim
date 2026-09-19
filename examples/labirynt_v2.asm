@@ -117,15 +117,15 @@ MAIN:
         AND #$08       ; sprawdz bit "znak gotowy"
         BEQ MAIN       ; brak znaku -> czekaj dalej (busy-wait)
         LDA ACIA_DATA  ; odczytaj znak (czyta = kasuje flage gotowosci)
-        CMP #'W'
+        CMP #'w'
         BEQ MUP        ; W -> ruch w gore
-        CMP #'S'
+        CMP #'s'
         BEQ MDN        ; S -> ruch w dol
-        CMP #'A'
+        CMP #'a'
         BEQ MLF        ; A -> ruch w lewo
-        CMP #'D'
+        CMP #'d'
         BEQ MRT        ; D -> ruch w prawo
-        CMP #'Q'
+        CMP #'q'
         BEQ QUIT       ; Q -> zakoncz gre
         BRA MAIN       ; inny klawisz -> ignoruj, czekaj dalej
 
@@ -213,7 +213,7 @@ QUIT:
         JSR PRTXT      ; wypisz "DO WIDZENIA - RESET = 0500R"
         JSR PARKCUR    ; przenies kursor na 23;1
         JSR SHOWCUR    ; przywroc widocznosc kursora
-        JMP $FF00      ; powrot do WozMon
+        JMP $F000      ; powrot do WozMon
 
 ; ============================================================
 ; BLOK: PROCEDURY WYJSCIA TERMINALOWEGO
@@ -510,10 +510,10 @@ SCORELN:               ; wiersz 17: "SKARBY n/10   RUCHY mmm"
 ; Opis: napisy zakonczone bajtem zerowym, uzywane przez PRTXT.
 ; ============================================================
 TITLE:   .byte "TEST ANSI - LABIRYNT",0
-HELPMSG: .byte "W/A/S/D - RUCH   Q - KONIEC",0
+HELPMSG: .byte "w/a/s/d - RUCH   q - KONIEC",0
 SMSG1:   .byte "SKARBY ",0
 SMSG2:   .byte "/10   RUCHY ",0
-BYEMSG:  .byte "DO WIDZENIA - RESET = 0500R",0
+BYEMSG:  .byte "Do Widzenia - RESET = 0500R",0
 
 ; ============================================================
 ; BLOK: TABLICE SKARBOW POZA ZERO PAGE
