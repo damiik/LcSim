@@ -37,7 +37,7 @@ namespace lc  {
     }
     void drive(const std::string&,const std::string& value);
     Logic value(Net n) const  {
-      return nets.at(n).value;
+      return nets[n].value;
     }
     std::string bits(const Probe&) const;
     std::string hex(const Probe&) const;
@@ -130,7 +130,7 @@ namespace lc  {
     std::vector<Probe> views;
     std::unordered_map<std::string,size_t> probe_index;
     std::vector<Net> parent;
-    std::priority_queue<Event> queue;
+    std::map<Time,std::vector<Event>> buckets;
     uint64_t sequence=0;
     std::vector<uint8_t> dirty;
     std::vector<int> dirty_gates,dirty_groups;

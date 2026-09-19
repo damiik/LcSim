@@ -197,9 +197,9 @@ namespace lc  {
       }
     }
     advance(0);
-    while(!queue.empty())  {
-      if(queue.top().at>100000000)throw std::runtime_error("startup did not settle within 100 us");
-      advance(queue.top().at-now);
+    while(!buckets.empty())  {
+      if(buckets.begin()->first>100000000)throw std::runtime_error("startup did not settle within 100 us");
+      advance(buckets.begin()->first-now);
     }
     now=0;
     initializing=false;
@@ -211,7 +211,7 @@ namespace lc  {
     }
   }
   void Simulator::enqueue(Time at,int kind,int id,Logic v,uint64_t gen,bool weak)  {
-    queue.push(  {
+    buckets[at].push_back(  {
       at,sequence++,kind,id,v,gen,weak
     }
     );
@@ -322,7 +322,9 @@ namespace lc  {
   // 4 for DMUX4, and 4 for the DMUX family in general.
   void Simulator::evaluate_pure(int id)  {
     auto& g=gates[id];
+#ifdef LCSIM_STATS
     stats.evaluations++;
+#endif
     const auto t=g.e.type;
     Logic v[MAX_GATE_INPUTS];
     const uint32_t nin=static_cast<uint32_t>(g.e.in.size());
@@ -598,8 +600,8 @@ namespace lc  {
     uint64_t same_time_events=0;
     Time previous=-1;
     evaluate_dirty();
-    while(!queue.empty()&&queue.top().at<=end)  {
-      Time t=queue.top().at;
+    while(!buckets.empty()&&buckets.begin()->first<=end)  {
+      Time t=buckets.begin()->first;
       now=t;
       if(t!=previous)  {
         same_time_events=0;
@@ -607,40 +609,43 @@ namespace lc  {
       }
       bool changed=false;
       do  {
-        Event e=queue.top();
-        queue.pop();
-        if(++same_time_events>1000000)throw std::runtime_error("zero-delay oscillation at "+std::to_string(now)+" ps");
-        stats.events++;
-        if(e.kind==0)  {
-          auto& d=drivers[e.id];
-          if(d.generation!=e.generation)continue;
-          d.pending=false;
-          d.value=e.value;
-          d.weak=e.weak;
-          touched.push_back(d.net);
-          changed=true;
-        }
-        else if(e.kind==1)  {
-          auto& g=gates[e.id];
-          if(auto_clock)schedule(g.drivers[0],inv(drivers[g.drivers[0]].value),0);
-          enqueue(now+profile.tick*g.e.period,1,e.id);
-        }
-        else if(e.kind==2)  {
-          auto& g=gates[e.id];
-          if(e.generation!=g.read_generation)continue;
-          g.ready=true;
-          g.settled_address=g.address;
-          if(g.address>=0)g.read_word=g.e.memory[static_cast<size_t>(g.address)];
-          mark_dirty(e.id);
-        }
-        else if(e.kind==3)  {
-          auto& g=gates[e.id];
-          if(e.generation!=g.read_generation)continue;
-          g.switch_state=e.value;
-          changed=true;
+        auto it=buckets.begin();
+        std::vector<Event> batch=std::move(it->second);
+        buckets.erase(it);
+        for(const auto& e:batch)  {
+          if(++same_time_events>1000000)throw std::runtime_error("zero-delay oscillation at "+std::to_string(now)+" ps");
+          stats.events++;
+          if(e.kind==0)  {
+            auto& d=drivers[e.id];
+            if(d.generation!=e.generation)continue;
+            d.pending=false;
+            d.value=e.value;
+            d.weak=e.weak;
+            touched.push_back(d.net);
+            changed=true;
+          }
+          else if(e.kind==1)  {
+            auto& g=gates[e.id];
+            if(auto_clock)schedule(g.drivers[0],inv(drivers[g.drivers[0]].value),0);
+            enqueue(now+profile.tick*g.e.period,1,e.id);
+          }
+          else if(e.kind==2)  {
+            auto& g=gates[e.id];
+            if(e.generation!=g.read_generation)continue;
+            g.ready=true;
+            g.settled_address=g.address;
+            if(g.address>=0)g.read_word=g.e.memory[static_cast<size_t>(g.address)];
+            mark_dirty(e.id);
+          }
+          else if(e.kind==3)  {
+            auto& g=gates[e.id];
+            if(e.generation!=g.read_generation)continue;
+            g.switch_state=e.value;
+            changed=true;
+          }
         }
       }
-      while(!queue.empty()&&queue.top().at==t);
+      while(!buckets.empty()&&buckets.begin()->first==t);
       if(changed)resolve();
       evaluate_dirty();
     }
