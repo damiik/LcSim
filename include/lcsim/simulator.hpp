@@ -130,7 +130,11 @@ namespace lc  {
     std::vector<Probe> views;
     std::unordered_map<std::string,size_t> probe_index;
     std::vector<Net> parent;
-    std::map<Time,std::vector<Event>> buckets;
+     struct Bucket {
+      Time at=0;
+      std::vector<Event> events;
+    };
+    std::vector<Bucket> buckets;
     uint64_t sequence=0;
     std::vector<uint8_t> dirty;
     std::vector<int> dirty_gates,dirty_groups;
@@ -138,6 +142,8 @@ namespace lc  {
     int root_group=0;
     bool has_switches=false,initializing=true;
     std::vector<Net> touched;
+    std::vector<uint8_t> touched_flag;
+    std::vector<Net> touched_list;
     Net alloc();
     Net root(Net);
     void join(Net,Net);

@@ -126,6 +126,8 @@ namespace lc  {
     alloc();
     root_group=flatten(d,d.root,  {},  {},"",true);
     caches.resize(d.definitions.size());
+    touched_flag.assign(nets.size(),0);
+    touched_list.reserve(256);
     for(auto& g:gates)  {
       for(auto& n:g.e.in)n=root(n);
       for(auto& n:g.e.out)n=root(n);
@@ -198,8 +200,8 @@ namespace lc  {
     }
     advance(0);
     while(!buckets.empty())  {
-      if(buckets.begin()->first>100000000)throw std::runtime_error("startup did not settle within 100 us");
-      advance(buckets.begin()->first-now);
+      if(buckets.front().at>100000000)throw std::runtime_error("startup did not settle within 100 us");
+      advance(buckets.front().at-now);
     }
     now=0;
     initializing=false;
@@ -211,10 +213,26 @@ namespace lc  {
     }
   }
   void Simulator::enqueue(Time at,int kind,int id,Logic v,uint64_t gen,bool weak)  {
-    buckets[at].push_back(  {
+    Event e  {
       at,sequence++,kind,id,v,gen,weak
+    };
+    // Linear scan; K (distinct future times) is small (single digits to low tens).
+    for(size_t k=0;k<buckets.size();k++)  {
+      if(buckets[k].at==at)  {
+        buckets[k].events.push_back(e);
+        return;
+      }
+      if(buckets[k].at>at)  {
+        Bucket nb;
+        nb.at=at;
+        nb.events.push_back(e);
+        buckets.insert(buckets.begin()+static_cast<long>(k),std::move(nb));
+        return;
+      }
     }
-    );
+    buckets.push_back(Bucket{});
+    buckets.back().at=at;
+    buckets.back().events.push_back(e);
   }
   Time Simulator::delay(const Gate& g)const  {
     if(g.e.cycles>=0)return static_cast<Time>(std::llround(g.e.cycles*profile.tick));
@@ -235,9 +253,14 @@ namespace lc  {
   }
   void Simulator::resolve()  {
     if(!has_switches)  {
-      std::sort(touched.begin(),touched.end());
-      touched.erase(std::unique(touched.begin(),touched.end()),touched.end());
+      // Deduplicate via flag array; avoids an O(k log k) sort on every batch.
       for(Net n:touched)  {
+        if(touched_flag[n])continue;
+        touched_flag[n]=1;
+        touched_list.push_back(n);
+      }
+      touched.clear();
+      for(Net n:touched_list)  {
         Logic strong=Logic::Z,weak=Logic::Z;
         for(int id:nets[n].drivers)  {
           const auto& d=drivers[id];
@@ -256,7 +279,8 @@ namespace lc  {
         }
         );
       }
-      touched.clear();
+      for(Net n:touched_list)touched_flag[n]=0;
+      touched_list.clear();
       return;
     }
     touched.clear();
@@ -600,52 +624,53 @@ namespace lc  {
     uint64_t same_time_events=0;
     Time previous=-1;
     evaluate_dirty();
-    while(!buckets.empty()&&buckets.begin()->first<=end)  {
-      Time t=buckets.begin()->first;
+    while(!buckets.empty()&&buckets.front().at<=end)  {
+      Time t=buckets.front().at;
       now=t;
       if(t!=previous)  {
         same_time_events=0;
         previous=t;
       }
       bool changed=false;
-      do  {
-        auto it=buckets.begin();
-        std::vector<Event> batch=std::move(it->second);
-        buckets.erase(it);
-        for(const auto& e:batch)  {
-          if(++same_time_events>1000000)throw std::runtime_error("zero-delay oscillation at "+std::to_string(now)+" ps");
-          stats.events++;
-          if(e.kind==0)  {
-            auto& d=drivers[e.id];
-            if(d.generation!=e.generation)continue;
-            d.pending=false;
-            d.value=e.value;
-            d.weak=e.weak;
-            touched.push_back(d.net);
-            changed=true;
-          }
-          else if(e.kind==1)  {
-            auto& g=gates[e.id];
-            if(auto_clock)schedule(g.drivers[0],inv(drivers[g.drivers[0]].value),0);
-            enqueue(now+profile.tick*g.e.period,1,e.id);
-          }
-          else if(e.kind==2)  {
-            auto& g=gates[e.id];
-            if(e.generation!=g.read_generation)continue;
-            g.ready=true;
-            g.settled_address=g.address;
-            if(g.address>=0)g.read_word=g.e.memory[static_cast<size_t>(g.address)];
-            mark_dirty(e.id);
-          }
-          else if(e.kind==3)  {
-            auto& g=gates[e.id];
-            if(e.generation!=g.read_generation)continue;
-            g.switch_state=e.value;
-            changed=true;
-          }
+      // Index-based iteration: new same-time events may be appended to the
+      // current bucket during processing (dt=0 schedules), and that must not
+      // invalidate our position.
+      size_t i=0;
+      while(i<buckets.front().events.size())  {
+        Event e=buckets.front().events[i++];
+        if(++same_time_events>1000000)throw std::runtime_error("zero-delay oscillation at "+std::to_string(now)+" ps");
+        stats.events++;
+        if(e.kind==0)  {
+          auto& d=drivers[e.id];
+          if(d.generation!=e.generation)continue;
+          d.pending=false;
+          d.value=e.value;
+          d.weak=e.weak;
+          touched.push_back(d.net);
+          changed=true;
+        }
+        else if(e.kind==1)  {
+          auto& g=gates[e.id];
+          if(auto_clock)schedule(g.drivers[0],inv(drivers[g.drivers[0]].value),0);
+          enqueue(now+profile.tick*g.e.period,1,e.id);
+        }
+        else if(e.kind==2)  {
+          auto& g=gates[e.id];
+          if(e.generation!=g.read_generation)continue;
+          g.ready=true;
+          g.settled_address=g.address;
+          if(g.address>=0)g.read_word=g.e.memory[static_cast<size_t>(g.address)];
+          mark_dirty(e.id);
+        }
+        else if(e.kind==3)  {
+          auto& g=gates[e.id];
+          if(e.generation!=g.read_generation)continue;
+          g.switch_state=e.value;
+          changed=true;
         }
       }
-      while(!buckets.empty()&&buckets.begin()->first==t);
+      buckets.front().events.clear();
+      buckets.erase(buckets.begin());
       if(changed)resolve();
       evaluate_dirty();
     }
