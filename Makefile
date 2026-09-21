@@ -1,7 +1,7 @@
 CXX ?= g++
 AR ?= ar
 PYTHON ?= python3
-CXXFLAGS ?= -O3 -DNDEBUG -std=c++17 -Wall -Wextra
+CXXFLAGS ?= -O3 -DNDEBUG -std=c++17 -Wall -Wextra -flto -march=native -mtune=native -fno-plt
 CPPFLAGS += -Iinclude
 RAYLIB_DIR ?= ../third_party/raylib
 RAYLIB_CFLAGS ?= -I$(RAYLIB_DIR)/src

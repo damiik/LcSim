@@ -110,7 +110,12 @@ def compile_file(path, output):
    if t=='OSCILLOSCOPE' and k=='workspace':
     scope+=r.get('scope_channel_names',[])
     if not scope_config:scope_config=r
-   enum_name='MODULE' if module>=0 else {'DFF':'D_FF','SW':'SWITCH','PULL':'PULLUP'}.get(t,t)
+   if module>=0:
+    enum_name='MODULE'
+   elif t in ('AND','OR','XOR','NAND','NOR') and len(r['i'])==2:
+    enum_name=t+'2'
+   else:
+    enum_name={'DFF':'D_FF','SW':'SWITCH','PULL':'PULLUP'}.get(t,t)
    lines+=[' { Element e; e.type=GateType::'+enum_name+'; e.name='+q(element_name)+'; e.in='+vec(r['i'])+'; e.out='+vec(r['o'])+'; e.module='+str(module)+';']
    for source,target in [('io_base','io_base'),('pc','cycles'),('pd','ns'),('tsu','setup'),('th','hold'),('aw','aw'),('dw','dw'),('delay_ns','memory_ns'),('x','x'),('y','y'),('nsz','size')]:
     if source in r:lines+=[' e.'+target+'='+str(r[source])+';']

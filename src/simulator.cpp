@@ -15,7 +15,9 @@ namespace lc  {
       return x==Logic::Z?Logic::X:x;
     }
     constexpr bool pure(GateType t)  {
-      return t==GateType::AND||t==GateType::OR||t==GateType::XOR||t==GateType::NAND||t==GateType::NOR||t==GateType::NOT||t==GateType::BUF||t==GateType::TBUF||t==GateType::OC||t==GateType::MUX2||t==GateType::MUX4||t==GateType::DMUX2||t==GateType::DMUX4;
+      return t==GateType::AND||t==GateType::OR||t==GateType::XOR||t==GateType::NAND||t==GateType::NOR||
+             t==GateType::AND2||t==GateType::OR2||t==GateType::XOR2||t==GateType::NAND2||t==GateType::NOR2||
+             t==GateType::NOT||t==GateType::BUF||t==GateType::TBUF||t==GateType::OC||t==GateType::MUX2||t==GateType::MUX4||t==GateType::DMUX2||t==GateType::DMUX4;
     }
     Time ps(double n)  {
       return static_cast<Time>(std::llround(n*1000));
@@ -126,8 +128,17 @@ namespace lc  {
     alloc();
     root_group=flatten(d,d.root,  {},  {},"",true);
     caches.resize(d.definitions.size());
+    for(auto& g:gates)  {
+      g.delay_ps=delay(g);
+      if(g.e.type==GateType::CLK)g.period_ps=profile.tick*g.e.period;
+      if(g.e.type==GateType::RAM||g.e.type==GateType::ROM)g.memory_delay_ps=ps(g.e.memory_ns);
+    }
     touched_flag.assign(nets.size(),0);
-    touched_list.reserve(256);
+    observed.assign(nets.size(),0);
+    touched_list.reserve(512);
+    buckets.reserve(128);
+    touched.reserve(512);
+
     for(auto& g:gates)  {
       for(auto& n:g.e.in)n=root(n);
       for(auto& n:g.e.out)n=root(n);
@@ -141,6 +152,12 @@ namespace lc  {
     for(auto& net:nets)  {
       std::sort(net.users.begin(),net.users.end());
       net.users.erase(std::unique(net.users.begin(),net.users.end()),net.users.end());
+    }
+    // Detect CLK nets that can be driven directly (single strong driver, no contention).
+    for(auto& g:gates)  {
+      if(g.e.type!=GateType::CLK||g.drivers.empty())continue;
+      Net n=drivers[g.drivers[0]].net;
+      if(nets[n].drivers.size()==1)g.fast_clock=true;
     }
     for(auto& pview:views)for(auto& n:pview.nets)n=root(n);
     // Explicitly named decimal suffixes form little-endian logical buses.
@@ -199,9 +216,9 @@ namespace lc  {
       }
     }
     advance(0);
-    while(!buckets.empty())  {
-      if(buckets.front().at>100000000)throw std::runtime_error("startup did not settle within 100 us");
-      advance(buckets.front().at-now);
+    while(bucket_head<buckets.size())  {
+      if(buckets[bucket_head].at>100000000)throw std::runtime_error("startup did not settle within 100 us");
+      advance(buckets[bucket_head].at-now);
     }
     now=0;
     initializing=false;
@@ -212,12 +229,14 @@ namespace lc  {
       if(g.e.type==GateType::CLK)enqueue(profile.tick*g.e.period,1,static_cast<int>(i));
     }
   }
+  
   void Simulator::enqueue(Time at,int kind,int id,Logic v,uint64_t gen,bool weak)  {
     Event e  {
-      at,sequence++,kind,id,v,gen,weak
+      gen,static_cast<int32_t>(id),static_cast<uint8_t>(kind),v,weak
     };
     // Linear scan; K (distinct future times) is small (single digits to low tens).
-    for(size_t k=0;k<buckets.size();k++)  {
+    // Scan only live buckets [bucket_head, size). K is small.
+    for(size_t k=bucket_head;k<buckets.size();k++)  {
       if(buckets[k].at==at)  {
         buckets[k].events.push_back(e);
         return;
@@ -225,14 +244,17 @@ namespace lc  {
       if(buckets[k].at>at)  {
         Bucket nb;
         nb.at=at;
+        nb.events.reserve(8);
         nb.events.push_back(e);
         buckets.insert(buckets.begin()+static_cast<long>(k),std::move(nb));
         return;
       }
     }
-    buckets.push_back(Bucket{});
-    buckets.back().at=at;
-    buckets.back().events.push_back(e);
+    Bucket nb;
+    nb.at=at;
+    nb.events.reserve(8);
+    nb.events.push_back(e);
+    buckets.push_back(std::move(nb));
   }
   Time Simulator::delay(const Gate& g)const  {
     if(g.e.cycles>=0)return static_cast<Time>(std::llround(g.e.cycles*profile.tick));
@@ -261,6 +283,17 @@ namespace lc  {
       }
       touched.clear();
       for(Net n:touched_list)  {
+        if(nets[n].drivers.size()==1)  {
+          const auto& d=drivers[nets[n].drivers[0]];
+          Logic v=d.value;
+          bool is_weak=d.weak;
+          if(v==nets[n].value&&is_weak==nets[n].weak)continue;
+          nets[n].value=v;
+          nets[n].weak=is_weak;
+          for(int g:nets[n].users)mark_dirty(g);
+          if(observe&&observed[n])observe({now,n,v});
+          continue;
+        }
         Logic strong=Logic::Z,weak=Logic::Z;
         for(int id:nets[n].drivers)  {
           const auto& d=drivers[id];
@@ -274,10 +307,7 @@ namespace lc  {
         nets[n].value=v;
         nets[n].weak=is_weak;
         for(int g:nets[n].users)mark_dirty(g);
-        if(observe)observe(  {
-          now,n,v
-        }
-        );
+        if(observe&&observed[n])observe({now,n,v});
       }
       for(Net n:touched_list)touched_flag[n]=0;
       touched_list.clear();
@@ -331,10 +361,7 @@ namespace lc  {
         nets[n].value=v;
         nets[n].weak=is_weak;
         for(int g:nets[n].users)mark_dirty(g);
-        if(observe)observe(  {
-          now,n,v
-        }
-        );
+        if(observe&&observed[n])observe({now,n,v});
       }
     }
   }
@@ -364,6 +391,17 @@ namespace lc  {
     }
     else if(t==GateType::OC)  {
       out[0]=v[0]==Logic::H?Logic::L:Logic::Z;
+    }
+    else if(t==GateType::AND2||t==GateType::OR2||t==GateType::XOR2||t==GateType::NAND2||t==GateType::NOR2)  {
+      // Specialized 2-input path: no loop, no stack buffer normalization.
+      Logic a=binary(v[0]),b=binary(v[1]);
+      Logic r;
+      if(t==GateType::AND2)       r=(a==Logic::L||b==Logic::L)?Logic::L:(a==Logic::H&&b==Logic::H)?Logic::H:Logic::X;
+      else if(t==GateType::OR2)   r=(a==Logic::H||b==Logic::H)?Logic::H:(a==Logic::L&&b==Logic::L)?Logic::L:Logic::X;
+      else if(t==GateType::XOR2)  r=(a==Logic::X||b==Logic::X)?Logic::X:(a==Logic::H)?inv(b):(b==Logic::H)?inv(a):Logic::L;
+      else if(t==GateType::NAND2) r=(a==Logic::L||b==Logic::L)?Logic::H:(a==Logic::H&&b==Logic::H)?Logic::L:Logic::X;
+      else                        r=(a==Logic::H||b==Logic::H)?Logic::L:(a==Logic::L&&b==Logic::L)?Logic::H:Logic::X;
+      out[0]=r;
     }
     else  {
       for(uint32_t i=0;i<nin;i++)v[i]=binary(v[i]);
@@ -420,7 +458,7 @@ namespace lc  {
       }
     }
 
-    const Time dt=delay(g);
+    const Time dt=g.delay_ps;
     const bool weak_out=(t==GateType::TBUF)&&nets[g.e.in[0]].weak;
     for(uint32_t p=0;p<nout;p++)schedule(g.drivers[p],out[p],dt,weak_out);
   }
@@ -433,7 +471,7 @@ namespace lc  {
     Logic v[MAX_GATE_INPUTS];
     const uint32_t nin=static_cast<uint32_t>(g.e.in.size());
     for(uint32_t i=0;i<nin;i++)v[i]=value(g.e.in[i]);
-    const Time dt=delay(g);
+    const Time dt=g.delay_ps;
 
     if(t==GateType::SWITCH)  {
       Logic en=binary(v[1]);
@@ -451,8 +489,12 @@ namespace lc  {
         else if(en==Logic::X&&data!=g.stored)g.stored=Logic::X;
       }
       Logic q=g.stored,nq=inv(g.stored);
-      schedule(g.drivers[0],q,dt,false);
-      schedule(g.drivers[1],nq,dt,false);
+      if(q!=g.last_q||nq!=g.last_nq)  {
+        g.last_q=q;
+        g.last_nq=nq;
+        schedule(g.drivers[0],q,dt,false);
+        schedule(g.drivers[1],nq,dt,false);
+      }
       return;
     }
     if(t==GateType::D_FF)  {
@@ -470,8 +512,12 @@ namespace lc  {
       }
       g.last_clock=clk;
       Logic q=g.stored,nq=inv(g.stored);
-      schedule(g.drivers[0],q,dt,false);
-      schedule(g.drivers[1],nq,dt,false);
+      if(q!=g.last_q||nq!=g.last_nq)  {
+        g.last_q=q;
+        g.last_nq=nq;
+        schedule(g.drivers[0],q,dt,false);
+        schedule(g.drivers[1],nq,dt,false);
+      }
       return;
     }
     if(t==GateType::TERMINAL)  {
@@ -525,7 +571,14 @@ namespace lc  {
       }
       if(addr!=g.address)  {
         g.address=addr;
-        enqueue(now+ps(g.e.memory_ns),2,id,Logic::X,++g.read_generation);
+        if(g.memory_delay_ps==0)  {
+          // Zero-access memory: settle in-place, no event round-trip.
+          g.ready=true;
+          g.settled_address=addr;
+          g.read_word=addr>=0?g.e.memory[static_cast<size_t>(addr)]:0;
+        } else {
+          enqueue(now+g.memory_delay_ps,2,id,Logic::X,++g.read_generation);
+        }
       }
       else if(changed&&g.settled_address==addr&&addr>=0)g.read_word=g.e.memory[static_cast<size_t>(addr)];
       const size_t oe=t==GateType::ROM?g.e.aw:g.e.aw+g.e.dw+1;
@@ -624,8 +677,8 @@ namespace lc  {
     uint64_t same_time_events=0;
     Time previous=-1;
     evaluate_dirty();
-    while(!buckets.empty()&&buckets.front().at<=end)  {
-      Time t=buckets.front().at;
+    while(bucket_head<buckets.size()&&buckets[bucket_head].at<=end)  {
+      Time t=buckets[bucket_head].at;
       now=t;
       if(t!=previous)  {
         same_time_events=0;
@@ -636,8 +689,8 @@ namespace lc  {
       // current bucket during processing (dt=0 schedules), and that must not
       // invalidate our position.
       size_t i=0;
-      while(i<buckets.front().events.size())  {
-        Event e=buckets.front().events[i++];
+      while(i<buckets[bucket_head].events.size())  {
+        Event e=buckets[bucket_head].events[i++];
         if(++same_time_events>1000000)throw std::runtime_error("zero-delay oscillation at "+std::to_string(now)+" ps");
         stats.events++;
         if(e.kind==0)  {
@@ -651,8 +704,29 @@ namespace lc  {
         }
         else if(e.kind==1)  {
           auto& g=gates[e.id];
-          if(auto_clock)schedule(g.drivers[0],inv(drivers[g.drivers[0]].value),0);
-          enqueue(now+profile.tick*g.e.period,1,e.id);
+          if(auto_clock)  {
+            if(g.fast_clock)  {
+              // Single strong driver on the clock net: skip schedule()+resolve().
+              const int dr=g.drivers[0];
+              Net n=drivers[dr].net;
+              Logic nv=inv(drivers[dr].value);
+              drivers[dr].generation++;
+              drivers[dr].pending=false;
+              drivers[dr].value=nv;
+              drivers[dr].target=nv;
+              drivers[dr].target_weak=false;
+              drivers[dr].weak=false;
+              if(nets[n].value!=nv||nets[n].weak)  {
+                nets[n].value=nv;
+                nets[n].weak=false;
+                for(int user:nets[n].users)mark_dirty(user);
+                if(observe&&observed[n]) observe({now,n,nv});
+              }
+            } else {
+              schedule(g.drivers[0],inv(drivers[g.drivers[0]].value),0);
+            }
+          }
+          enqueue(now+g.period_ps,1,e.id);
         }
         else if(e.kind==2)  {
           auto& g=gates[e.id];
@@ -669,10 +743,15 @@ namespace lc  {
           changed=true;
         }
       }
-      buckets.front().events.clear();
-      buckets.erase(buckets.begin());
+      buckets[bucket_head].events.clear();
+      ++bucket_head;
       if(changed)resolve();
       evaluate_dirty();
+    }
+    // Compact consumed buckets periodically to bound vector growth.
+    if(bucket_head>64&&bucket_head*2>buckets.size())  {
+      buckets.erase(buckets.begin(),buckets.begin()+static_cast<long>(bucket_head));
+      bucket_head=0;
     }
     now=end;
   }

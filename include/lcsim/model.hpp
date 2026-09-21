@@ -30,7 +30,10 @@ namespace lc  {
   enum class GateType : uint8_t  {
     UNKNOWN = 0,
     // pure combinational
+    // pure combinational
     AND, OR, XOR, NAND, NOR, NOT, BUF, TBUF, OC,
+    // 2-input specializations emitted by lc_compile.py for the hot path
+    AND2, OR2, XOR2, NAND2, NOR2,
     MUX2, MUX4, DMUX2, DMUX4,
     // stateful primitives
     D_FF, D_LATCH, SWITCH,
@@ -51,6 +54,11 @@ namespace lc  {
       case GateType::XOR:          return "XOR";
       case GateType::NAND:         return "NAND";
       case GateType::NOR:          return "NOR";
+      case GateType::AND2:         return "AND";
+      case GateType::OR2:          return "OR";
+      case GateType::XOR2:         return "XOR";
+      case GateType::NAND2:        return "NAND";
+      case GateType::NOR2:         return "NOR";
       case GateType::NOT:          return "NOT";
       case GateType::BUF:          return "BUF";
       case GateType::TBUF:         return "TBUF";
@@ -91,6 +99,11 @@ namespace lc  {
     if(s=="XOR")return GateType::XOR;
     if(s=="NAND")return GateType::NAND;
     if(s=="NOR")return GateType::NOR;
+    if(s=="AND2")return GateType::AND2;
+    if(s=="OR2")return GateType::OR2;
+    if(s=="XOR2")return GateType::XOR2;
+    if(s=="NAND2")return GateType::NAND2;
+    if(s=="NOR2")return GateType::NOR2;
     if(s=="NOT")return GateType::NOT;
     if(s=="BUF")return GateType::BUF;
     if(s=="TBUF")return GateType::TBUF;

@@ -62,11 +62,15 @@ namespace lc  {
     bool cache_enabled=true, auto_clock=true;
     size_t cache_budget=16*1024*1024;
     std::function<void(Transition)> observe;
+    std::vector<uint8_t> observed;
     size_t gate_count() const  {
       return gates.size();
     }
     size_t net_count() const  {
       return nets.size();
+    }
+    void observe_net(Net n,bool on)  {
+      if(n<observed.size())observed[n]=on?1:0;
     }
     private:
     struct Driver  {
@@ -97,6 +101,9 @@ namespace lc  {
       bool ready=false;
       uint64_t read_generation=0;
       Logic switch_state=Logic::H;
+      Logic last_q=Logic::Z,last_nq=Logic::Z;
+      Time delay_ps=0, period_ps=0, memory_delay_ps=0;
+      bool fast_clock=false;
     };
     struct Group  {
       int definition;
@@ -105,15 +112,11 @@ namespace lc  {
       bool pure=true;
     };
     struct Event  {
-      Time at;
-      uint64_t sequence;
-      int kind,id;
-      Logic value;
       uint64_t generation;
+      int32_t id;
+      uint8_t kind;
+      Logic value;
       bool weak=false;
-      bool operator<(const Event& o) const  {
-        return at!=o.at?at>o.at:sequence>o.sequence;
-      }
     };
     struct Result  {
       int index;
@@ -135,7 +138,7 @@ namespace lc  {
       std::vector<Event> events;
     };
     std::vector<Bucket> buckets;
-    uint64_t sequence=0;
+    size_t bucket_head=0;
     std::vector<uint8_t> dirty;
     std::vector<int> dirty_gates,dirty_groups;
     std::vector<std::vector<int>> gate_groups;
