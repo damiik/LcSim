@@ -29,3 +29,9 @@ lub headless:
 
 6. kompilacja monitora eWoz do pamięci ROM (adres 0xF000), wynik należy wkleić do pamięci ROM w pliku z procesorem (toml):
 ../../nim/logic_cosmos_cpu_tools/lcct asm --isa mos6502-safe --format hex ./examples/eWoz_optimized.asm -o wozmon.mem
+
+
+
+
+#NIM
+python3 tools/lc_compile_nim.py ./examples/cpu65c02-wozmon_v5.toml build-nim/design.nim
