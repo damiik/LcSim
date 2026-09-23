@@ -2,7 +2,8 @@
 """TOML v2 -> Nim design module (proof-of-concept)."""
 import argparse, pathlib, re, tomllib, sys
 
-PRIMITIVES = {'AND','OR','NOT','BUF','XOR','NAND','NOR','DFF','D_LATCH','MUX2',
+PRIMITIVES = {'AND','OR','NOT','BUF','XOR','NAND','NOR',
+              'DFF','D_LATCH','MUX2','MUX4','DMUX2','DMUX4',
               'OC','TBUF','SW','SWITCH','H','L','PULLUP','PULLDOWN','PULL',
               'CLK','NODE','INOUT','BUS','DISPLAY','OSCILLOSCOPE','ROM','RAM','TERMINAL'}
 FIXED = {'TERMINAL':(26,8),'NOT':(1,1),'BUF':(1,1),'OC':(1,1),
@@ -15,7 +16,8 @@ FIELDS = set('t io_base io_mode n i o x y cd nnp nsh nsz non nof nsn nst nbo hd 
 
 GT = {
     'AND':'gtAND','OR':'gtOR','XOR':'gtXOR','NAND':'gtNAND','NOR':'gtNOR',
-    'NOT':'gtNOT','BUF':'gtBUF','TBUF':'gtTBUF','OC':'gtOC','MUX2':'gtMUX2',
+    'NOT':'gtNOT','BUF':'gtBUF','TBUF':'gtTBUF','OC':'gtOC',
+    'MUX2':'gtMUX2','MUX4':'gtMUX4','DMUX2':'gtDMUX2','DMUX4':'gtDMUX4',
     'DFF':'gtDFF','D_LATCH':'gtDLATCH','SW':'gtSWITCH','SWITCH':'gtSWITCH',
     'H':'gtH','L':'gtL','PULLUP':'gtPULLUP','PULL':'gtPULLUP','PULLDOWN':'gtPULLDOWN',
     'CLK':'gtCLK','NODE':'gtNODE','INOUT':'gtINOUT','BUS':'gtBUS',
@@ -62,7 +64,14 @@ def nimstr(s):
 
 def emit_element(r, module):
     t = r['t']
-    enum_name = 'gtMODULE' if module >= 0 else GT.get(t, 'gtUNKNOWN')
+    if module >= 0:
+        enum_name = 'gtMODULE'
+    else:
+        enum_name = GT.get(t)
+        if enum_name is None:
+            raise ValueError(
+                f'unsupported element type {t!r}; '
+                f'znane typy: {sorted(GT.keys())}')
 
     cycles = float(r['pc']) if 'pc' in r else -1.0
     ns = float(r['pd']) if 'pd' in r else -1.0
@@ -119,6 +128,7 @@ def compile_file(path, output):
     if len(names) != len(tables): raise ValueError('duplicate module names')
 
     normalized = {}
+    net_names_by_module = {}
     for key, table in tables.items():
         inherit = table.get('inherit', [])
         if not isinstance(inherit, list) or any(f not in ['t','x','y','cd','nnp'] for f in inherit):
@@ -165,6 +175,75 @@ def compile_file(path, output):
             row['i'] = [root(w[0] if isinstance(w, list) else w) for w in row['i']]
             row['o'] = [root(w) for w in row['o']]
 
+    # NODE name-group union-find. NODE elements carry no logic; every pin of
+    # same-named NODEs is one electrical net. Nim PoC has no PANELS view, so
+    # all NODEs are dropped after the rewrite. Net names are recorded for
+    # debug lookups.
+    for key, rows in normalized.items():
+        npar = {}
+        def nroot(n):
+            npar.setdefault(n, n)
+            if npar[n] != n:
+                npar[n] = nroot(npar[n])
+            return npar[n]
+        def nunion(a, b):
+            if a and b:
+                npar[nroot(b)] = nroot(a)
+        def npins(r):
+            pins = []
+            for pin in r['i']:
+                if isinstance(pin, list):
+                    pins.extend([w for w in pin if w])
+                elif pin:
+                    pins.append(pin)
+            for pin in r['o']:
+                if pin:
+                    pins.append(pin)
+            return pins
+        nodes = [r for r in rows['gates'] if r.get('t') == 'NODE']
+        for r in nodes:
+            pins = npins(r)
+            for p in pins:
+                nroot(p)
+            for p in pins[1:]:
+                nunion(pins[0], p)
+        by_name = {}
+        for r in nodes:
+            nm = r.get('n', '')
+            if nm:
+                by_name.setdefault(nm, []).append(r)
+        for nm, grp in by_name.items():
+            if len(grp) < 2:
+                continue
+            pins = []
+            for r in grp:
+                pins.extend(npins(r))
+            for p in pins[1:]:
+                nunion(pins[0], p)
+        allrows = sum(rows.values(), [])
+        for r in allrows:
+            new_i = []
+            for pin in r['i']:
+                if isinstance(pin, list):
+                    new_i.append([nroot(w) for w in pin])
+                elif pin == 0:
+                    new_i.append(0)
+                else:
+                    new_i.append(nroot(pin))
+            r['i'] = new_i
+            r['o'] = [nroot(w) if w else 0 for w in r['o']]
+        module_net_names = {}
+        for r in nodes:
+            nm = r.get('n', '')
+            if not nm:
+                continue
+            pins = npins(r)
+            if not pins:
+                continue
+            module_net_names.setdefault(nroot(pins[0]), nm)
+        net_names_by_module[key] = module_net_names
+        rows['gates'] = [r for r in rows['gates'] if r.get('t') != 'NODE']
+
     keys = list(tables)
     ids = {k: i for i, k in enumerate(keys)}
     # Display name ("D_FF") -> integer definition index, matching `d.root`
@@ -193,6 +272,24 @@ def compile_file(path, output):
 
     out = []
     out.append('import model')
+    out.append('')
+    out.append('proc findNetName*(def: int, n: Net): string =')
+    out.append('  ## Look up the schematic NODE name of a definition-local net.')
+    out.append('  ## Returns "" when the net has no recorded name.')
+    out.append('  case def')
+    for k in keys:
+        nms = net_names_by_module.get(k, {})
+        if not nms:
+            continue
+        out.append(f'  of {ids[k]}:')
+        out.append(f'    const tbl: array[{len(nms)}, tuple[k: uint32, v: string]] = [')
+        for root, nm in sorted(nms.items()):
+            out.append(f'      ({root}\'u32, {nimstr(nm)}),')
+        out.append('    ]')
+        out.append('    for (kk, vv) in tbl:')
+        out.append('      if kk == n.uint32: return vv')
+        out.append('    return ""')
+    out.append('  else: return ""')
     out.append('')
     out.append('proc makeDesign*(): Design =')
     out.append('  var d: Design')

@@ -33,6 +33,14 @@ type
     memoryDelay: Time
     fastClock: bool
     activeLow: bool
+    # TERMINAL latch state (PIA and ACIA)
+    terminalRead: bool
+    terminalReadReg: int
+    terminalReadValue: uint8
+    terminalKeyLatched: bool
+    terminalWrite: bool
+    terminalWriteReg: int
+    terminalWriteValue: uint8
 
   Event = object
     generation: uint64
@@ -66,12 +74,46 @@ type
     dirty: seq[bool]
     dirtyGates: seq[int32]
 
+    probes: seq[tuple[name: string, net: Net]]
+
+    # Mapowanie lokalny numer netu w definicji top (Main Workspace) -> net
+    # symulatora. Wypełniane tylko dla wywołania flatten(..., top=true),
+    # po zakończeniu wszystkich joinów zrootowane przez union-find.
+    # Używane przez main.nim razem z findNetName() z design.nim.
+    topMap*: seq[Net]
+
+    # Terminal I/O
     terminalOut*: File
     terminalFifo: Deque[uint8]
+    terminalKbdControl: uint8
+    terminalDispControl: uint8
+    terminalLastNl: bool
     lastPollWall: float
     pollInterval: float
 
 # ---------- helpers ----------
+
+# Emit one byte to the host terminal, matching C++ Terminal::put_char
+# semantics for CR/LF/BS. Used only by the TERMINAL handler.
+proc emitTerminalChar(s: Simulator, ch: uint8) =
+  let c = ch and 0x7f
+  if c == 0x0d or c == 0x0a:
+    # CR or LF: one newline, but a LF immediately after CR is absorbed.
+    if c == 0x0a and s.terminalLastNl:
+      return
+    s.terminalOut.write('\n')
+    s.terminalOut.flushFile()
+    s.terminalLastNl = true
+  elif c == 0x08 or c == 0x7f:
+    s.terminalOut.write('\b')
+    s.terminalOut.flushFile()
+    s.terminalLastNl = false
+  elif c >= 0x20 and c < 0x7f:
+    s.terminalOut.write(char(c))
+    s.terminalOut.flushFile()
+    s.terminalLastNl = false
+  # Everything else (control chars) is silently dropped, same as C++.
+
 
 proc inv*(x: Logic): Logic {.inline.} =
   case x
@@ -87,8 +129,9 @@ proc isPure(t: GateType): bool {.inline.} =
         gtMUX2, gtMUX4, gtDMUX2, gtDMUX4}
 
 # ---------- host stdin ----------
-
-proc pollTerminal(s: Simulator) =
+# Non-blocking host stdin poller. Called from the main loop, not per
+# simulator tick, so a benchmark run performs zero syscalls.
+proc pollTerminal*(s: Simulator) =
   var fds: array[1, TPollfd]
   fds[0].fd = cint(STDIN_FILENO)
   fds[0].events = POLLIN
@@ -134,6 +177,8 @@ proc flatten(s: Simulator, d: Design, defIdx: int,
   var map = newSeq[Net](m.nets.int + 1)
   for n in 1 .. m.nets.int:
     map[n] = s.alloc()
+  if top:
+    s.topMap = map
   for i in 0 ..< ins.len:
     s.join(ins[i], map[m.ins[i].int])
   for i in 0 ..< outs.len:
@@ -165,9 +210,18 @@ proc flatten(s: Simulator, d: Design, defIdx: int,
       continue
 
     if e.typ == gtSWITCH:
+      # Trivial joins jak w C++; sam SWITCH jest bramka stateful (patrz
+      # evaluateStateful), ktora w resolve() dynamicznie scala A<->B.
       s.join(e.ins[0], e.outs[1])
       s.join(e.ins[2], e.outs[0])
-      continue
+      # (bez continue - SWITCH nadal trafia do gates)
+
+    # Collect top-level named probes (mirrors C++ flatten).
+    if top and e.name.len > 0:
+      if e.typ == gtOUTPUT and e.ins.len > 0:
+        s.probes.add((e.name, e.ins[0]))
+      elif e.typ in {gtNODE, gtINPUT} and e.outs.len > 0:
+        s.probes.add((e.name, e.outs[0]))
 
     if e.typ in {gtNODE, gtOUTPUT, gtINOUT, gtBUS, gtDISPLAY, gtOSCILLOSCOPE}:
       continue
@@ -176,6 +230,12 @@ proc flatten(s: Simulator, d: Design, defIdx: int,
 
     var g: Gate
     g.e = e
+    # Zgodnie z C++ flatten(): kazda pamiec ROM/RAM rozszerzana do 2^aw
+    # (pady zerami). Bez tego odczyt poza dlugoscia seq jest UB.
+    if g.e.typ in {gtROM, gtRAM}:
+      let depth = 1 shl g.e.aw.int
+      if g.e.memory.len < depth:
+        g.e.memory.setLen(depth)
     g.stored = lL
     g.lastClock = lL
     g.lastData = lX
@@ -285,7 +345,9 @@ proc resolve(s: Simulator) =
 
 proc delayFor(s: Simulator, g: Gate): Time =
   if g.e.cycles >= 0:
-    return Time(g.e.cycles * 1000.0 + 0.5)
+    # cycles/pc sa w krokach biezacej technologii (profile.tick), nie w ns.
+    # Zgodne z C++: llround(cycles * profile.tick).
+    return Time(g.e.cycles * float(s.profile.tick) + 0.5)
   if g.e.ns >= 0:
     return Time(g.e.ns * 1000.0 + 0.5)
   case g.e.typ
@@ -434,7 +496,21 @@ proc evaluateStateful(s: Simulator, id: int32) =
         g.stored = lX
     s.schedule(drvBegin.int32, g.stored, dt)
     s.schedule(drvBegin.int32 + 1, inv(g.stored), dt)
+
   of gtTERMINAL:
+    # Matches src/terminal.hpp and the C++ simulator TERMINAL path:
+    #   Apple-1 PIA (ioMode == "apple1"):
+    #     reg 0 KBD     read: key value
+    #     reg 1 KBDCR   read: kbd control | (key ready ? 0x80 : 0); write: control
+    #     reg 2 DSP     write: char (requires display_control bit 2)
+    #     reg 3 DSPCR   write: display control
+    #   ACIA 6551-lite (ioMode == "acia"), used by eWoz:
+    #     reg 0 DATA    read: key value; write: char
+    #     reg 1 STATUS  read: 0x10 | (key ready ? 0x08 : 0); write: reset
+    #     reg 2 CMD     read/write kbd control
+    #     reg 3 CTRL    read/write display control
+    let acia = g.e.ioMode == "acia"
+
     var a: uint64 = 0
     var aValid = true
     for b in 0 ..< 16:
@@ -444,43 +520,122 @@ proc evaluateStateful(s: Simulator, id: int32) =
         break
       if x == lH:
         a = a or (1'u64 shl b)
-    var handled = false
+    var reg = -1
     if aValid:
       let base = g.e.ioBase.uint64
       if a >= base and a < base + 4:
-        handled = true
-        let reg = int(a - base)
-        let rd = v[24] == lL and v[25] == lH
-        let wr = v[25] == lL and v[24] == lH
-        if wr and reg == 1:
-          var d: uint64 = 0
-          for b in 0 ..< 8:
-            if v[16 + b] == lH:
-              d = d or (1'u64 shl b)
-          s.terminalOut.write(char(d and 0xff'u64))
-          s.terminalOut.flushFile()
-        if rd:
-          var byteOut: uint64 = 0
-          case reg
-          of 0:
-            if s.terminalFifo.len > 0:
-              byteOut = uint64(s.terminalFifo.popFirst()) or 0x80'u64
-            else:
-              byteOut = 0
-          of 1:
-            byteOut = 0x02
-          else:
-            byteOut = 0
-          for b in 0 ..< 8:
-            let bit = ((byteOut shr b) and 1) == 1
-            s.schedule(g.driverBegin.int32 + int32(b),
-                       if bit: lH else: lL, 0)
-        else:
-          for b in 0 ..< 8:
-            s.schedule(g.driverBegin.int32 + int32(b), lZ, 0)
-    if not handled:
+        reg = int(a - base)
+    let rd = reg >= 0 and v[24] == lL and v[25] == lH
+    let wr = reg >= 0 and v[25] == lL and v[24] == lH
+
+    # Debug output for TERMINAL reads/writes, matching C++ Terminal::evaluate() debug output.
+    # if reg >= 0:
+    #   stderr.writeLine("[TERM] t=", s.now, " reg=", reg,
+    #                    " rd=", rd, " wr=", wr,
+    #                    " v24=", digit(v[24]), " v25=", digit(v[25]))
+
+    # --- WRITE latch on falling /WR, commit on rising /WR ---
+    if wr and not g.terminalWrite:
+      var bv: uint8 = 0
       for b in 0 ..< 8:
-        s.schedule(g.driverBegin.int32 + int32(b), lZ, 0)
+        if v[16 + b] == lH:
+          bv = bv or (1'u8 shl b)
+      g.terminalWrite = true
+      g.terminalWriteReg = reg
+      g.terminalWriteValue = bv
+    if g.terminalWrite and not wr:
+      # Only commit if /WR is now actually high AND the address is still
+      # in the window at the same register. Matches C++ commit conditions.
+      if v[25] == lH and reg == g.terminalWriteReg:
+        let wreg = g.terminalWriteReg
+        let wval = g.terminalWriteValue
+        if acia:
+          case wreg
+          of 0:
+            s.emitTerminalChar(wval)
+          of 1:
+            s.terminalFifo.clear()
+            s.terminalKbdControl = 0
+          of 2:
+            s.terminalKbdControl = wval
+          of 3:
+            s.terminalDispControl = wval
+          else:
+            discard
+        else:
+          case wreg
+          of 1:
+            s.terminalKbdControl = wval
+          of 2:
+            if (s.terminalDispControl and 0x04) != 0:
+              s.emitTerminalChar(wval)
+          of 3:
+            s.terminalDispControl = wval
+          else:
+            discard
+      g.terminalWrite = false
+
+    # --- READ: consume on rising /RD (or address change) ---
+    if g.terminalRead and (not rd or reg != g.terminalReadReg):
+      if g.terminalKeyLatched and s.terminalFifo.len > 0:
+        discard s.terminalFifo.popFirst()
+      g.terminalRead = false
+
+    # --- READ latch on falling /RD ---
+    if rd and not g.terminalRead:
+      g.terminalRead = true
+      g.terminalReadReg = reg
+      g.terminalKeyLatched = false   # unconditionally reset, then set for reg 0
+      if acia:
+        case reg
+        of 0:
+          if s.terminalFifo.len > 0:
+            g.terminalReadValue = s.terminalFifo[0]
+            g.terminalKeyLatched = true
+          else:
+            g.terminalReadValue = 0'u8
+        of 1:
+          var bv: uint8 = 0x10'u8
+          if s.terminalFifo.len > 0:
+            bv = bv or 0x08'u8
+          g.terminalReadValue = bv
+        of 2:
+          g.terminalReadValue = s.terminalKbdControl
+        of 3:
+          g.terminalReadValue = s.terminalDispControl
+        else:
+          g.terminalReadValue = 0'u8
+      else:
+        case reg
+        of 0:
+          if s.terminalFifo.len > 0:
+            g.terminalReadValue = s.terminalFifo[0]
+            g.terminalKeyLatched = true
+          else:
+            g.terminalReadValue = 0'u8
+        of 1:
+          var bv = s.terminalKbdControl and 0x7f'u8
+          if s.terminalFifo.len > 0:
+            bv = bv or 0x80'u8
+          g.terminalReadValue = bv
+        of 2:
+          g.terminalReadValue = 0'u8
+        of 3:
+          g.terminalReadValue = s.terminalDispControl
+        else:
+          g.terminalReadValue = 0'u8
+
+    # --- drive data outputs: latched value while /RD low, else Z ---
+    let rv = g.terminalReadValue
+    for b in 0 ..< 8:
+      var outV = lZ
+      if rd:
+        if ((rv shr b) and 1) == 1:
+          outV = lH
+        else:
+          outV = lL
+      s.schedule(g.driverBegin.int32 + int32(b), outV, 0)
+
   of gtROM, gtRAM:
     var memAddr: int64 = 0
     var valid = true
@@ -562,11 +717,6 @@ proc evaluateDirty(s: Simulator) =
 # ---------- main loop ----------
 
 proc advance*(s: Simulator, duration: Time) =
-  let wall = epochTime()
-  if wall - s.lastPollWall >= s.pollInterval:
-    s.lastPollWall = wall
-    s.pollTerminal()
-
   let stopAt = s.now + duration
   var sameTime = 0
   var prev: Time = -1
@@ -646,10 +796,19 @@ proc newSimulator*(d: Design, prof: Profile): Simulator =
   result.initializing = true
   result.terminalOut = stdout
   result.terminalFifo = initDeque[uint8](64)
-  result.lastPollWall = epochTime()
+  result.probes = @[]
+  result.terminalKbdControl = 0
+  result.terminalDispControl = 0
+  result.terminalLastNl = false
+  result.lastPollWall = 0.0
   result.pollInterval = 0.005
   discard result.alloc()
   result.flatten(d, d.root, @[], @[], true)
+  # Po wszystkich joinach sprowadź mapę top do reprezentantów, żeby main
+  # mógł indeksować nazwane nete workspace bez wywoływania root().
+  for i in 1 ..< result.topMap.len:
+    if result.topMap[i] != Net(0):
+      result.topMap[i] = result.root(result.topMap[i])
 
   result.touchedFlag = newSeq[uint8](result.nets.len)
   result.touched = newSeqOfCap[Net](256)
@@ -712,6 +871,23 @@ proc newSimulator*(d: Design, prof: Profile): Simulator =
       for d in 0 ..< g.driverCount:
         result.schedule(g.driverBegin + int32(d), initV, 0, isWeak)
 
+  # # --- DIAGNOSTIC (tymczasowy) ---
+  # block:
+  #   stderr.writeLine("[profile] name=", result.profile.name,
+  #                    " tick=", result.profile.tick,
+  #                    " gate=", result.profile.gate,
+  #                    " cq=", result.profile.cq)
+  #   var shown = 0
+  #   for i in 0 ..< result.gates.len:
+  #     let g = result.gates[i].addr
+  #     if g.e.cycles >= 0 and shown < 20:
+  #       stderr.writeLine("[delay] gate#", i,
+  #                        " typ=", $g.e.typ,
+  #                        " cycles=", g.e.cycles,
+  #                        " ns=", g.e.ns,
+  #                        " computed=", g.delay, " ps")
+  #       inc shown
+
   result.advance(0)
   var guard = 0
   while result.bucketHead < result.buckets.len:
@@ -723,6 +899,11 @@ proc newSimulator*(d: Design, prof: Profile): Simulator =
       raise newException(ValueError, "startup >100us")
     result.advance(nextAt - result.now)
 
+  # Root probe nets through union-find now that all joins are done.
+  for k in 0 ..< result.probes.len:
+    let rooted = result.root(result.probes[k].net)
+    result.probes[k] = (result.probes[k].name, rooted)
+
   result.now = 0
   result.initializing = false
   for i in 0 ..< result.gates.len:
@@ -732,3 +913,28 @@ proc newSimulator*(d: Design, prof: Profile): Simulator =
     if g.e.typ == gtCLK:
       result.enqueue(result.profile.tick * Time(g.e.period),
                      1'u8, int32(i), lX, 0, false)
+
+proc topNetValue*(s: Simulator, localN: int): Logic =
+  ## Bieżąca wartość netu top po lokalnym numerze w definicji workspace.
+  ## Ten sam numer przyjmuje findNetName() z design.nim.
+  if localN <= 0 or localN >= s.topMap.len:
+    return lZ
+  let n = s.topMap[localN]
+  if n == Net(0):
+    return lZ
+  return s.nets[n.int].value
+
+proc topNetCount*(s: Simulator): int =
+  return s.topMap.len
+
+proc dumpProbes*(s: Simulator) =
+  ## Print every top-level named probe with its current value to stdout.
+  echo "--- probes (", s.probes.len, ") ---"
+  for (nm, n) in s.probes:
+    echo nm, "=", digit(s.nets[n.int].value)
+
+proc probeValue*(s: Simulator, name: string): char =
+  for (nm, n) in s.probes:
+    if nm == name:
+      return digit(s.nets[n.int].value)
+  return '?'
